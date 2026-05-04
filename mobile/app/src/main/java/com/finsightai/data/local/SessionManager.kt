@@ -1,6 +1,7 @@
 package com.finsightai.data.local
 
 import android.content.Context
+import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -28,12 +29,19 @@ class SessionManager(private val context: Context) {
     val email: Flow<String?> = context.dataStore.data.map { it[KEY_EMAIL] }
     val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { it[KEY_IS_LOGGED_IN] ?: false }
 
+    // True when KEY_IS_LOGGED_IN exists in DataStore — set on first login, never removed.
+    // Distinguishes first-time users (→ Onboarding) from returning users (→ Login).
+    val hasLoggedInBefore: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs.contains(KEY_IS_LOGGED_IN)
+    }
+
     suspend fun saveSession(
         token: String,
         firstName: String,
         lastName: String,
         email: String
     ) {
+        Log.d("SessionManager", "saveSession: email=$email")
         context.dataStore.edit { prefs ->
             prefs[KEY_TOKEN] = token
             prefs[KEY_FIRST_NAME] = firstName
@@ -41,9 +49,20 @@ class SessionManager(private val context: Context) {
             prefs[KEY_EMAIL] = email
             prefs[KEY_IS_LOGGED_IN] = true
         }
+        Log.d("SessionManager", "saveSession: done")
     }
 
     suspend fun clearSession() {
-        context.dataStore.edit { it.clear() }
+        Log.d("SessionManager", "clearSession: clearing session data")
+        context.dataStore.edit { prefs ->
+            prefs.remove(KEY_TOKEN)
+            prefs.remove(KEY_FIRST_NAME)
+            prefs.remove(KEY_LAST_NAME)
+            prefs.remove(KEY_EMAIL)
+            // Set to false, not removed — KEY_IS_LOGGED_IN key must persist so
+            // hasLoggedInBefore stays true for returning users (prevents Onboarding loop).
+            prefs[KEY_IS_LOGGED_IN] = false
+        }
+        Log.d("SessionManager", "clearSession: done")
     }
 }

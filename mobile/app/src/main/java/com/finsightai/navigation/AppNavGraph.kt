@@ -1,11 +1,14 @@
 package com.finsightai.navigation
 
+import android.util.Log
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
+import com.finsightai.core.AppAuthState
 import com.finsightai.presentation.addexpense.AddExpenseScreen
 import com.finsightai.presentation.auth.LoginScreen
 import com.finsightai.presentation.auth.SignUpScreen
@@ -21,6 +24,17 @@ import com.finsightai.presentation.upload.UploadScreen
 
 @Composable
 fun AppNavGraph(navController: NavHostController) {
+    // Global session expiry handler: any 401/403 on an authenticated request clears
+    // the session (done in AuthInterceptor) and lands here to wipe the back stack.
+    LaunchedEffect(Unit) {
+        AppAuthState.unauthorizedEvent.collect {
+            Log.d("AppNavGraph", "unauthorizedEvent — clearing back stack and navigating to Login")
+            navController.navigate(NavRoutes.Login.route) {
+                popUpTo(0) { inclusive = true }
+            }
+        }
+    }
+
     NavHost(
         navController = navController,
         startDestination = NavRoutes.Splash.route
@@ -34,6 +48,11 @@ fun AppNavGraph(navController: NavHostController) {
                 },
                 onNavigateToHome = {
                     navController.navigate(NavRoutes.Home.route) {
+                        popUpTo(NavRoutes.Splash.route) { inclusive = true }
+                    }
+                },
+                onNavigateToLogin = {
+                    navController.navigate(NavRoutes.Login.route) {
                         popUpTo(NavRoutes.Splash.route) { inclusive = true }
                     }
                 }
