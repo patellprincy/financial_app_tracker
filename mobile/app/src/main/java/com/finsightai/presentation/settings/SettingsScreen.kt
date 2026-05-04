@@ -24,6 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,6 +35,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.finsightai.R
 import com.finsightai.ui.components.FinSightCard
 import com.finsightai.ui.theme.ExpenseRed
@@ -42,10 +45,20 @@ import com.finsightai.ui.theme.ExpenseRed
 @Composable
 fun SettingsScreen(
     onNavigateToLogin: () -> Unit,
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    viewModel: SettingsViewModel = viewModel()
 ) {
+    val loggedOut by viewModel.loggedOut.collectAsStateWithLifecycle()
+    val firstName by viewModel.firstName.collectAsStateWithLifecycle()
+    val lastName by viewModel.lastName.collectAsStateWithLifecycle()
+    val email by viewModel.email.collectAsStateWithLifecycle()
+
     var notificationsEnabled by remember { mutableStateOf(true) }
     var darkModeEnabled by remember { mutableStateOf(false) }
+
+    LaunchedEffect(loggedOut) {
+        if (loggedOut) onNavigateToLogin()
+    }
 
     Scaffold(
         topBar = {
@@ -71,7 +84,11 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             item {
-                ProfileCard()
+                ProfileCard(
+                    firstName = firstName,
+                    lastName = lastName,
+                    email = email
+                )
             }
 
             item {
@@ -124,7 +141,7 @@ fun SettingsScreen(
                 FinSightCard(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { onNavigateToLogin() },
+                        .clickable { viewModel.logout() },
                     containerColor = ExpenseRed.copy(alpha = 0.08f)
                 ) {
                     Row(
@@ -152,7 +169,14 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun ProfileCard() {
+private fun ProfileCard(firstName: String, lastName: String, email: String) {
+    val displayName = when {
+        firstName.isNotBlank() && lastName.isNotBlank() -> "$firstName $lastName"
+        firstName.isNotBlank() -> firstName
+        else -> "User"
+    }
+    val initial = firstName.firstOrNull()?.uppercaseChar()?.toString() ?: "U"
+
     FinSightCard(
         modifier = Modifier.fillMaxWidth(),
         containerColor = MaterialTheme.colorScheme.surface
@@ -172,7 +196,7 @@ private fun ProfileCard() {
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "R",
+                    text = initial,
                     style = MaterialTheme.typography.headlineMedium,
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Bold
@@ -180,13 +204,13 @@ private fun ProfileCard() {
             }
             Column {
                 Text(
-                    text = "Rahul Patel",
+                    text = displayName,
                     style = MaterialTheme.typography.titleLarge,
                     color = MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    text = "rahul@example.com",
+                    text = email.ifBlank { "" },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

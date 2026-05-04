@@ -10,32 +10,52 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.res.vectorResource
-import com.finsightai.R
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.finsightai.R
 import kotlinx.coroutines.delay
 
 @Composable
 fun SplashScreen(
     onNavigateToOnboarding: () -> Unit,
-    onNavigateToHome: () -> Unit
+    onNavigateToHome: () -> Unit,
+    onNavigateToLogin: () -> Unit,
+    viewModel: SplashViewModel = viewModel()
 ) {
     val alpha = remember { Animatable(0f) }
+    var animationComplete by remember { mutableStateOf(false) }
+    val destination by viewModel.destination.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) {
         alpha.animateTo(1f, animationSpec = tween(durationMillis = 800))
         delay(1200)
-        onNavigateToOnboarding()
+        animationComplete = true
+    }
+
+    LaunchedEffect(animationComplete, destination) {
+        if (animationComplete && destination != null) {
+            when (destination) {
+                SplashViewModel.Destination.Home -> onNavigateToHome()
+                SplashViewModel.Destination.Login -> onNavigateToLogin()
+                SplashViewModel.Destination.Onboarding -> onNavigateToOnboarding()
+                null -> {}
+            }
+        }
     }
 
     Column(
