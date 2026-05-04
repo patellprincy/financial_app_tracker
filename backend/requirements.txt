@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+sqlalchemy
+psycopg2-binary
+pydantic
+pydantic-settings
+bcrypt==3.2.2
+python-jose
+slowapi
+python-dotenv
+email-validator
