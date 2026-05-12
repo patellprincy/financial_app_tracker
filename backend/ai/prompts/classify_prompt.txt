@@ -1,6 +1,6 @@
 Classify this financial transaction.
 
-Use merchant and notes as the primary signal. Use amount as secondary signals.
+Use both merchant and notes as primary signals. Use amount as a secondary signal.
 If transaction_type is unclear, default to "expense".
 
 Preferred expense categories:
