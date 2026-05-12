@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -31,23 +32,26 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.finsightai.R
+import com.finsightai.domain.model.CategoryBreakdown
+import com.finsightai.domain.model.DashboardSummary
 import com.finsightai.domain.model.Transaction
 import com.finsightai.domain.model.TransactionType
 import com.finsightai.navigation.NavRoutes
 import com.finsightai.ui.components.CategoryChip
+import com.finsightai.ui.components.EmptyState
+import com.finsightai.ui.components.ErrorState
 import com.finsightai.ui.components.FinSightBottomNav
 import com.finsightai.ui.components.FinSightCard
 import com.finsightai.ui.components.SectionHeader
@@ -90,7 +94,7 @@ fun HomeScreen(
                     IconButton(onClick = {}) {
                         Icon(
                             imageVector = ImageVector.vectorResource(R.drawable.notifications),
-                            contentDescription = "Notifications" ,
+                            contentDescription = "Notifications",
                             modifier = Modifier.size(24.dp)
                         )
                     }
@@ -118,10 +122,7 @@ fun HomeScreen(
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
             item {
-                MonthlySpendCard(
-                    totalSpend = uiState.monthlySpend,
-                    topCategory = uiState.topCategory
-                )
+                MonthlySpendCard(summary = uiState.summary)
             }
             item {
                 QuickActionsRow(
@@ -130,36 +131,67 @@ fun HomeScreen(
                     onChat = onNavigateToChat
                 )
             }
-            item {
-                SpendingBreakdownSection(spendByCategory = uiState.spendByCategory)
-            }
-            item {
-                SectionHeader(
-                    title = "Recent Transactions",
-                    action = {
-                        Text(
-                            text = "See all",
-                            style = MaterialTheme.typography.labelMedium,
+            when {
+                uiState.isLoading -> item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 60.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(
                             color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.clickable { onNavigateToTransactions() }
+                            strokeWidth = 3.dp
                         )
                     }
-                )
-            }
-            items(uiState.recentTransactions) { transaction ->
-                RecentTransactionItem(
-                    transaction = transaction,
-                    onClick = {
-                        navController.navigate(NavRoutes.TransactionDetail.createRoute(transaction.id))
+                }
+                uiState.error != null -> item {
+                    ErrorState(
+                        message = uiState.error!!,
+                        onRetry = { viewModel.loadDashboard() }
+                    )
+                }
+                uiState.isEmpty -> item {
+                    EmptyState(
+                        title = "No Transactions Yet",
+                        subtitle = "Add your first transaction or upload a bank statement to get started."
+                    )
+                }
+                else -> {
+                    item {
+                        SpendingBreakdownSection(breakdown = uiState.categoryBreakdown)
                     }
-                )
+                    item {
+                        SectionHeader(
+                            title = "Recent Transactions",
+                            action = {
+                                Text(
+                                    text = "See all",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.clickable { onNavigateToTransactions() }
+                                )
+                            }
+                        )
+                    }
+                    items(uiState.recentTransactions) { transaction ->
+                        RecentTransactionItem(
+                            transaction = transaction,
+                            onClick = {
+                                navController.navigate(
+                                    NavRoutes.TransactionDetail.createRoute(transaction.id)
+                                )
+                            }
+                        )
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun MonthlySpendCard(totalSpend: Double, topCategory: String) {
+private fun MonthlySpendCard(summary: DashboardSummary) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
@@ -188,29 +220,31 @@ private fun MonthlySpendCard(totalSpend: Double, topCategory: String) {
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "₹${String.format(Locale.getDefault(), "%,.0f", totalSpend)}",
+                    text = "$${String.format(Locale.getDefault(), "%,.0f", summary.totalExpenses)}",
                     style = MaterialTheme.typography.displayMedium,
                     color = MaterialTheme.colorScheme.onPrimary,
                     fontWeight = FontWeight.Bold
                 )
-                Spacer(modifier = Modifier.height(12.dp))
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .background(
-                                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.15f),
-                                shape = RoundedCornerShape(20.dp)
-                            )
-                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                if (summary.topCategory.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(
-                            text = "Top: $topCategory",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onPrimary
-                        )
+                        Box(
+                            modifier = Modifier
+                                .background(
+                                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.15f),
+                                    shape = RoundedCornerShape(20.dp)
+                                )
+                                .padding(horizontal = 12.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = "Top: ${summary.topCategory}",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                        }
                     }
                 }
             }
@@ -292,32 +326,35 @@ private fun QuickActionButton(
 }
 
 @Composable
-private fun SpendingBreakdownSection(spendByCategory: Map<String, Double>) {
+private fun SpendingBreakdownSection(breakdown: List<CategoryBreakdown>) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SectionHeader(title = "Spending Breakdown")
         LazyRow(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             contentPadding = PaddingValues(horizontal = 0.dp)
         ) {
-            items(spendByCategory.entries.toList().take(5)) { (category, amount) ->
-                SpendingCategoryCard(category = category, amount = amount)
+            items(breakdown) { item ->
+                SpendingCategoryCard(breakdown = item)
             }
         }
     }
 }
 
 @Composable
-private fun SpendingCategoryCard(category: String, amount: Double) {
+private fun SpendingCategoryCard(breakdown: CategoryBreakdown) {
     FinSightCard(containerColor = MaterialTheme.colorScheme.surface) {
-        Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.Start) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            horizontalAlignment = Alignment.Start
+        ) {
             Text(
-                text = category,
+                text = "${breakdown.emoji} ${breakdown.categoryName}",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "₹${String.format(Locale.getDefault(), "%,.0f", amount)}",
+                text = "₹${String.format(Locale.getDefault(), "%,.0f", breakdown.amount)}",
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.SemiBold
@@ -367,7 +404,9 @@ private fun RecentTransactionItem(transaction: Transaction, onClick: () -> Unit)
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text(
-                    text = "${if (transaction.type == TransactionType.INCOME) "+" else "-"}₹${String.format(Locale.getDefault(), "%,.0f", transaction.amount)}",
+                    text = "${if (transaction.type == TransactionType.INCOME) "+" else "-"}₹${
+                        String.format(Locale.getDefault(), "%,.0f", transaction.amount)
+                    }",
                     style = MaterialTheme.typography.titleMedium,
                     color = if (transaction.type == TransactionType.INCOME) IncomeGreen else ExpenseRed,
                     fontWeight = FontWeight.SemiBold
