@@ -1,0 +1,25 @@
+Classify this financial transaction.
+
+Use both merchant and notes as primary signals. Use amount as a secondary signal.
+If transaction_type is unclear, default to "expense".
+
+Preferred expense categories:
+Food & Drinks, Groceries, Transport, Shopping, Bills, Entertainment, Health, Education, Travel, Rent, Insurance, Subscriptions, Pet Care, Fitness, Other
+
+Preferred income categories:
+Salary, Benefits, Transfer In, Refund, Interest Income, Rewards, Investment Income, Other Income
+
+Use a preferred category when it fits. If none fit, create a broad reusable category (1–3 words).
+Never use a merchant or brand name as the category.
+
+Merchant: {merchant}
+Amount: {amount}
+Notes: {notes}
+
+Return ONLY valid JSON:
+{{
+  "transaction_type": "income or expense",
+  "category_name": "",
+  "confidence": 0.0,
+  "reason": ""
+}}
