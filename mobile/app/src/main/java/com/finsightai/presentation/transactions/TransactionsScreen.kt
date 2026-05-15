@@ -19,11 +19,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.res.vectorResource
-import com.finsightai.R
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -33,13 +31,16 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
+import com.finsightai.R
 import com.finsightai.domain.model.Transaction
 import com.finsightai.domain.model.TransactionType
 import com.finsightai.ui.components.EmptyState
@@ -48,7 +49,6 @@ import com.finsightai.ui.components.FinSightCard
 import com.finsightai.ui.theme.ExpenseRed
 import com.finsightai.ui.theme.IncomeGreen
 import java.time.format.DateTimeFormatter
-import androidx.compose.material3.Icon
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -98,7 +98,6 @@ fun TransactionsScreen(
                         unfocusedContainerColor = MaterialTheme.colorScheme.surface
                     )
                 )
-
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(vertical = 12.dp)
@@ -161,8 +160,10 @@ private fun TransactionListItem(transaction: Transaction, onClick: () -> Unit) {
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = transaction.category.emoji,
-                    style = MaterialTheme.typography.titleLarge
+                    text = transaction.categoryName.firstOrNull()?.uppercase() ?: "?",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
                 )
             }
             Spacer(modifier = Modifier.width(12.dp))
@@ -173,13 +174,15 @@ private fun TransactionListItem(transaction: Transaction, onClick: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = "${transaction.category.displayName} · ${transaction.date.format(DateTimeFormatter.ofPattern("MMM d, yyyy"))}",
+                    text = "${transaction.categoryName} · ${transaction.date.format(DateTimeFormatter.ofPattern("MMM d, yyyy"))}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Text(
-                text = "${if (transaction.type == TransactionType.INCOME) "+" else "-"}₹${String.format(Locale.getDefault(), "%,.0f", transaction.amount)}",
+                text = "${if (transaction.type == TransactionType.INCOME) "+" else "-"}$${
+                    String.format(Locale.getDefault(), "%,.0f", transaction.amount)
+                }",
                 style = MaterialTheme.typography.titleMedium,
                 color = if (transaction.type == TransactionType.INCOME) IncomeGreen else ExpenseRed,
                 fontWeight = FontWeight.SemiBold

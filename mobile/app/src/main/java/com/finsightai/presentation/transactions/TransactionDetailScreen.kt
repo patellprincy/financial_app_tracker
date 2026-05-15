@@ -16,9 +16,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.res.vectorResource
-import com.finsightai.R
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -35,9 +32,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.finsightai.data.repository.MockDataRepository
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.finsightai.R
 import com.finsightai.domain.model.Transaction
 import com.finsightai.domain.model.TransactionType
 import com.finsightai.ui.components.ErrorState
@@ -51,9 +52,11 @@ import java.util.Locale
 @Composable
 fun TransactionDetailScreen(
     transactionId: String,
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    viewModel: TransactionsViewModel = viewModel()
 ) {
-    val transaction = MockDataRepository.getTransactionById(transactionId)
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val transaction = uiState.allTransactions.find { it.id == transactionId }
 
     Scaffold(
         topBar = {
@@ -61,7 +64,10 @@ fun TransactionDetailScreen(
                 title = { Text("Transaction Details") },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(ImageVector.vectorResource(R.drawable.arrow_back), contentDescription = "Back")
+                        Icon(
+                            ImageVector.vectorResource(R.drawable.arrow_back),
+                            contentDescription = "Back"
+                        )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -115,8 +121,10 @@ private fun TransactionDetailContent(transaction: Transaction, modifier: Modifie
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = transaction.category.emoji,
-                        style = MaterialTheme.typography.displayMedium
+                        text = transaction.categoryName.firstOrNull()?.uppercase() ?: "?",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
                 Spacer(modifier = Modifier.height(12.dp))
@@ -127,7 +135,9 @@ private fun TransactionDetailContent(transaction: Transaction, modifier: Modifie
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "${if (transaction.type == TransactionType.INCOME) "+" else "-"}₹${String.format(Locale.getDefault(), "%,.2f", transaction.amount)}",
+                    text = "${if (transaction.type == TransactionType.INCOME) "+" else "-"}$${
+                        String.format(Locale.getDefault(), "%,.2f", transaction.amount)
+                    }",
                     style = MaterialTheme.typography.displayLarge,
                     color = if (transaction.type == TransactionType.INCOME) IncomeGreen else ExpenseRed,
                     fontWeight = FontWeight.Bold
@@ -152,11 +162,17 @@ private fun TransactionDetailContent(transaction: Transaction, modifier: Modifie
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Spacer(modifier = Modifier.height(12.dp))
-                DetailRow(label = "Category", value = "${transaction.category.emoji} ${transaction.category.displayName}")
+                DetailRow(label = "Category", value = transaction.categoryName)
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                DetailRow(label = "Type", value = transaction.type.name.lowercase().replaceFirstChar { it.uppercase() })
+                DetailRow(
+                    label = "Type",
+                    value = transaction.type.name.lowercase().replaceFirstChar { it.uppercase() }
+                )
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                DetailRow(label = "Date", value = transaction.date.format(DateTimeFormatter.ofPattern("MMM d, yyyy")))
+                DetailRow(
+                    label = "Date",
+                    value = transaction.date.format(DateTimeFormatter.ofPattern("MMM d, yyyy"))
+                )
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                 DetailRow(label = "Transaction ID", value = "#${transaction.id.padStart(6, '0')}")
             }
