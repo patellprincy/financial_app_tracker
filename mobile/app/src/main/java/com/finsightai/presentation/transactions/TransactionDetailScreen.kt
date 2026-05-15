@@ -20,12 +20,14 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,10 +55,13 @@ import java.util.Locale
 fun TransactionDetailScreen(
     transactionId: String,
     onNavigateBack: () -> Unit,
-    viewModel: TransactionsViewModel = viewModel()
+    viewModel: TransactionDetailViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val transaction = uiState.allTransactions.find { it.id == transactionId }
+
+    LaunchedEffect(transactionId) {
+        viewModel.loadTransaction(transactionId)
+    }
 
     Scaffold(
         topBar = {
@@ -77,17 +82,40 @@ fun TransactionDetailScreen(
         },
         containerColor = MaterialTheme.colorScheme.background
     ) { innerPadding ->
-        if (transaction == null) {
-            ErrorState(
-                message = "Transaction not found",
-                onRetry = onNavigateBack,
-                modifier = Modifier.padding(innerPadding)
-            )
-        } else {
-            TransactionDetailContent(
-                transaction = transaction,
-                modifier = Modifier.padding(innerPadding)
-            )
+        when {
+            uiState.isLoading -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(
+                        color = MaterialTheme.colorScheme.primary,
+                        strokeWidth = 3.dp
+                    )
+                }
+            }
+            uiState.error != null -> {
+                ErrorState(
+                    message = uiState.error!!,
+                    onRetry = { viewModel.loadTransaction(transactionId) },
+                    modifier = Modifier.padding(innerPadding)
+                )
+            }
+            uiState.transaction != null -> {
+                TransactionDetailContent(
+                    transaction = uiState.transaction!!,
+                    modifier = Modifier.padding(innerPadding)
+                )
+            }
+            else -> {
+                ErrorState(
+                    message = "Transaction not found",
+                    onRetry = { viewModel.loadTransaction(transactionId) },
+                    modifier = Modifier.padding(innerPadding)
+                )
+            }
         }
     }
 }

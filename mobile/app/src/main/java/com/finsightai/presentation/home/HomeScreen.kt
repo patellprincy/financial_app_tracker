@@ -204,6 +204,8 @@ fun HomeScreen(
 
 @Composable
 private fun MonthlySpendCard(summary: DashboardSummary) {
+    val balance = summary.totalIncome - summary.totalExpenses
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
@@ -224,21 +226,82 @@ private fun MonthlySpendCard(summary: DashboardSummary) {
                 )
                 .padding(24.dp)
         ) {
-            Column {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                // Header
                 Text(
-                    text = "This Month's Spending",
+                    text = "This Month",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f)
                 )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "$${String.format(Locale.getDefault(), "%,.0f", summary.totalExpenses)}",
-                    style = MaterialTheme.typography.displayMedium,
-                    color = MaterialTheme.colorScheme.onPrimary,
-                    fontWeight = FontWeight.Bold
+
+                // Spending row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Spending:",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.9f)
+                    )
+                    Text(
+                        text = "$${String.format(Locale.getDefault(), "%,.0f", summary.totalExpenses)}",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                // Income row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Income:",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.9f)
+                    )
+                    Text(
+                        text = "+$${String.format(Locale.getDefault(), "%,.0f", summary.totalIncome)}",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                // Divider
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.15f))
                 )
+
+                // Balance row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Balance:",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.9f),
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "$${String.format(Locale.getDefault(), "%,.0f", balance)}",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                // Top category badge
                 if (summary.topCategory.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(12.dp))
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)

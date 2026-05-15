@@ -5,6 +5,7 @@ import kotlinx.serialization.Serializable
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
+import retrofit2.http.Path
 
 interface TransactionApiService {
 
@@ -15,6 +16,11 @@ interface TransactionApiService {
 
     @GET("transactions")
     suspend fun getTransactions(): List<TransactionDto>
+
+    @GET("transactions/{transactionId}")
+    suspend fun getTransactionById(
+        @Path("transactionId") transactionId: String
+    ): TransactionDto
 
     @GET("transactions/dashboard")
     suspend fun getDashboard(): DashboardDto

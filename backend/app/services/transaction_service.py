@@ -2,6 +2,7 @@ import logging
 from sqlalchemy.orm import Session
 from app.models.category import Category
 from app.models.transaction import Transaction
+from fastapi import HTTPException, status
 from app.schemas.transaction import (
     ManualTransactionRequest,
     TransactionResponse,
@@ -105,6 +106,27 @@ def get_transactions(user_id, db: Session) -> list[TransactionResponse]:
     return [_to_response(t) for t in transactions]
 
 
+def get_transaction_by_id(transaction_id: int, user_id, db: Session) -> TransactionResponse:
+
+    logger.info("get_transaction_by_id: transaction_id=%d user_id=%s", transaction_id, user_id)
+
+    transaction = (
+        db.query(Transaction)
+        .filter(Transaction.id == transaction_id, Transaction.user_id == user_id)
+        .first()
+    )
+
+    if transaction is None:
+        logger.warning("get_transaction_by_id: transaction not found — id=%d user_id=%s", transaction_id, user_id)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Transaction not found"
+        )
+
+    logger.info("get_transaction_by_id: success — id=%d merchant=%s", transaction.id, transaction.merchant)
+    return _to_response(transaction)
+
+
 def get_dashboard(user_id, db: Session) -> DashboardResponse:
     transactions = (
         db.query(Transaction)
@@ -113,22 +135,22 @@ def get_dashboard(user_id, db: Session) -> DashboardResponse:
         .all()
     )
 
-    total_expense = sum(t.amount for t in transactions if t.transaction_type == "expense")
-    total_income = sum(t.amount for t in transactions if t.transaction_type == "income")
+    total_expense = float(sum(t.amount for t in transactions if t.transaction_type == "expense") or 0.0)
+    total_income = float(sum(t.amount for t in transactions if t.transaction_type == "income") or 0.0)
 
     category_totals: dict[int, dict] = {}
     for t in transactions:
         if t.transaction_type == "expense":
             if t.category_id not in category_totals:
                 category_totals[t.category_id] = {"name": t.category_name, "amount": 0.0}
-            category_totals[t.category_id]["amount"] += t.amount
+            category_totals[t.category_id]["amount"] += float(t.amount)
 
     breakdown = [
         CategoryBreakdownResponse(
             category_id=cat_id,
             category_name=data["name"],
-            amount=round(data["amount"], 2),
-            percentage=round(data["amount"] / total_expense * 100, 2) if total_expense > 0 else 0.0,
+            amount=float(round(data["amount"], 2)),
+            percentage=float(round(data["amount"] / total_expense * 100, 2)) if total_expense > 0 else 0.0,
         )
         for cat_id, data in sorted(
             category_totals.items(), key=lambda x: x[1]["amount"], reverse=True
@@ -136,8 +158,8 @@ def get_dashboard(user_id, db: Session) -> DashboardResponse:
     ]
 
     return DashboardResponse(
-        total_expense=round(total_expense, 2),
-        total_income=round(total_income, 2),
+        total_expense=float(round(total_expense, 2)),
+        total_income=float(round(total_income, 2)),
         category_breakdown=breakdown,
         recent_transactions=[_to_response(t) for t in transactions[:10]],
     )

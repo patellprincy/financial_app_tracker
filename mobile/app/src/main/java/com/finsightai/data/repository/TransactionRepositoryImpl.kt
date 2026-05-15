@@ -46,6 +46,18 @@ class TransactionRepositoryImpl(
         }
     }
 
+    override suspend fun getTransactionById(transactionId: String): Result<Transaction> = runCatching {
+        Log.d("TransactionRepo", "getTransactionById: calling API — transactionId=$transactionId")
+        val response = apiService.getTransactionById(transactionId)
+        Log.d("TransactionRepo", "getTransactionById: success — merchant=${response.merchant}")
+        response.toDomain()
+    }.onFailure { ex ->
+        when (ex) {
+            is HttpException -> Log.e("TransactionRepo", "getTransactionById: HTTP ${ex.code()} ${ex.message()}")
+            else -> Log.e("TransactionRepo", "getTransactionById: ${ex.javaClass.simpleName} — ${ex.message}")
+        }
+    }
+
     override suspend fun getDashboard(): Result<DashboardData> = runCatching {
         Log.d("TransactionRepo", "getDashboard: calling API")
         val response = apiService.getDashboard()
