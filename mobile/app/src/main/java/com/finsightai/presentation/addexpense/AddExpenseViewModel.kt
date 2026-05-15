@@ -1,7 +1,11 @@
 package com.finsightai.presentation.addexpense
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.finsightai.data.local.SessionManager
+import com.finsightai.data.network.RetrofitClient
+import com.finsightai.data.repository.TransactionRepositoryImpl
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -16,10 +20,16 @@ data class AddExpenseUiState(
     val amountError: String? = null,
     val notesError: String? = null,
     val isLoading: Boolean = false,
-    val isSaved: Boolean = false
+    val isSaved: Boolean = false,
+    val error: String? = null
 )
 
-class AddExpenseViewModel : ViewModel() {
+class AddExpenseViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val sessionManager = SessionManager(application)
+    private val repository = TransactionRepositoryImpl(
+        RetrofitClient.buildTransactionApiService(sessionManager)
+    )
 
     private val _uiState = MutableStateFlow(AddExpenseUiState())
     val uiState: StateFlow<AddExpenseUiState> = _uiState.asStateFlow()
@@ -50,9 +60,16 @@ class AddExpenseViewModel : ViewModel() {
         }
 
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true) }
-            // API call will be wired here
-            _uiState.update { it.copy(isLoading = false, isSaved = true) }
+            _uiState.update { it.copy(isLoading = true, error = null) }
+            repository.addManualTransaction(merchant, amount.toDouble(), notes)
+                .onSuccess {
+                    _uiState.update { it.copy(isLoading = false, isSaved = true) }
+                }
+                .onFailure { ex ->
+                    _uiState.update {
+                        it.copy(isLoading = false, error = ex.message ?: "Failed to save transaction")
+                    }
+                }
         }
     }
 }

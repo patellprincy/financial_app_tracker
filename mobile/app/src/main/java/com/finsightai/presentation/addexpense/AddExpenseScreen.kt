@@ -38,12 +38,13 @@ import com.finsightai.ui.components.PrimaryButton
 @Composable
 fun AddExpenseScreen(
     onNavigateBack: () -> Unit,
+    onSaveSuccess: () -> Unit = onNavigateBack,
     viewModel: AddExpenseViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
     LaunchedEffect(uiState.isSaved) {
-        if (uiState.isSaved) onNavigateBack()
+        if (uiState.isSaved) onSaveSuccess()
     }
 
     Scaffold(
@@ -143,6 +144,14 @@ fun AddExpenseScreen(
                 },
                 enabled = !uiState.isLoading
             )
+
+            if (uiState.error != null) {
+                Text(
+                    text = uiState.error!!,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
         }
     }
 }
