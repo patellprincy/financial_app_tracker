@@ -29,7 +29,9 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,6 +46,7 @@ import com.finsightai.R
 import com.finsightai.domain.model.Transaction
 import com.finsightai.domain.model.TransactionType
 import com.finsightai.ui.components.EmptyState
+import com.finsightai.ui.components.ErrorState
 import com.finsightai.ui.components.FinSightBottomNav
 import com.finsightai.ui.components.FinSightCard
 import com.finsightai.ui.theme.ExpenseRed
@@ -59,6 +62,10 @@ fun TransactionsScreen(
     viewModel: TransactionsViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+
+    LaunchedEffect(Unit) {
+        viewModel.loadTransactions()
+    }
 
     Scaffold(
         topBar = {
@@ -116,21 +123,49 @@ fun TransactionsScreen(
                 }
             }
 
-            if (uiState.filteredTransactions.isEmpty()) {
-                EmptyState(
-                    title = "No transactions found",
-                    subtitle = "Try adjusting your search or filters"
-                )
-            } else {
-                LazyColumn(
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    items(uiState.filteredTransactions) { transaction ->
-                        TransactionListItem(
-                            transaction = transaction,
-                            onClick = { onNavigateToDetail(transaction.id) }
+            when {
+                uiState.isLoading -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(
+                            color = MaterialTheme.colorScheme.primary,
+                            strokeWidth = 3.dp
                         )
+                    }
+                }
+                uiState.error != null -> {
+                    ErrorState(
+                        message = uiState.error!!,
+                        onRetry = { viewModel.loadTransactions() }
+                    )
+                }
+                uiState.isEmpty -> {
+                    EmptyState(
+                        title = "No transactions found",
+                        subtitle = "Add a transaction or upload a bank statement to get started"
+                    )
+                }
+                uiState.filteredTransactions.isEmpty() -> {
+                    EmptyState(
+                        title = "No transactions found",
+                        subtitle = "Try adjusting your search or filters"
+                    )
+                }
+                else -> {
+                    LazyColumn(
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        items(uiState.filteredTransactions) { transaction ->
+                            TransactionListItem(
+                                transaction = transaction,
+                                onClick = { onNavigateToDetail(transaction.id) }
+                            )
+                        }
                     }
                 }
             }
