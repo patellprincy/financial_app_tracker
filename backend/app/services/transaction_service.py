@@ -2,6 +2,7 @@ import logging
 from sqlalchemy.orm import Session
 from app.models.category import Category
 from app.models.transaction import Transaction
+from fastapi import HTTPException, status
 from app.schemas.transaction import (
     ManualTransactionRequest,
     TransactionResponse,
@@ -106,7 +107,6 @@ def get_transactions(user_id, db: Session) -> list[TransactionResponse]:
 
 
 def get_transaction_by_id(transaction_id: int, user_id, db: Session) -> TransactionResponse:
-    from fastapi import HTTPException, status
 
     logger.info("get_transaction_by_id: transaction_id=%d user_id=%s", transaction_id, user_id)
 
