@@ -4,6 +4,8 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.finsightai.data.local.SessionManager
+import com.finsightai.data.network.RetrofitClient
+import com.finsightai.data.repository.TransactionRepositoryImpl
 import com.finsightai.domain.model.CategoryBreakdown
 import com.finsightai.domain.model.DashboardSummary
 import com.finsightai.domain.model.Transaction
@@ -30,6 +32,9 @@ data class HomeUiState(
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     private val sessionManager = SessionManager(application)
+    private val repository = TransactionRepositoryImpl(
+        RetrofitClient.buildTransactionApiService(sessionManager)
+    )
 
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
@@ -42,8 +47,27 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     fun loadDashboard() {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
-            // API call will be wired here in the next step
-            _uiState.update { it.copy(isLoading = false, greeting = buildGreeting()) }
+            repository.getDashboard()
+                .onSuccess { data ->
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            summary = data.summary,
+                            categoryBreakdown = data.categoryBreakdown,
+                            recentTransactions = data.recentTransactions,
+                            greeting = buildGreeting()
+                        )
+                    }
+                }
+                .onFailure { ex ->
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            error = ex.message ?: "Failed to load dashboard",
+                            greeting = buildGreeting()
+                        )
+                    }
+                }
         }
     }
 
