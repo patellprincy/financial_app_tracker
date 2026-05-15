@@ -1,10 +1,13 @@
-from fastapi import FastAPI
-from app.app import app as backend_app
-from ai.app import app as ai_app
+# Backwards-compatible entry point. Prefer the explicit form:
+#
+#   uvicorn app.main:app --reload --port 8000
+#
+# This file is retained so that `uvicorn main:app --port 8000` (run from
+# inside backend/) also works without breaking existing scripts.
+#
+# The AI service is now a separate process:
+#   uvicorn ai.app:app --reload --port 8001
 
-main_app = FastAPI(title="FinSight AI Gateway", version="1.0.0")
+from app.app import app  # noqa: F401
 
-main_app.mount("/api", backend_app)
-main_app.mount("/ai", ai_app)
-
-app = main_app
+__all__ = ["app"]
