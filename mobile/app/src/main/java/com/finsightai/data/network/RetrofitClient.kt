@@ -15,7 +15,13 @@ object RetrofitClient {
         encodeDefaults = true
     }
 
-    fun buildAuthApiService(sessionManager: SessionManager): AuthApiService {
+    fun buildAuthApiService(sessionManager: SessionManager): AuthApiService =
+        buildRetrofit(sessionManager).create(AuthApiService::class.java)
+
+    fun buildTransactionApiService(sessionManager: SessionManager): TransactionApiService =
+        buildRetrofit(sessionManager).create(TransactionApiService::class.java)
+
+    private fun buildRetrofit(sessionManager: SessionManager): Retrofit {
         val client = OkHttpClient.Builder()
             .addInterceptor(AuthInterceptor(sessionManager))
             .build()
@@ -25,6 +31,5 @@ object RetrofitClient {
             .client(client)
             .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
             .build()
-            .create(AuthApiService::class.java)
     }
 }
