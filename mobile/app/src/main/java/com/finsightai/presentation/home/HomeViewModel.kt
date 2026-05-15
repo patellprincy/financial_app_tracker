@@ -4,7 +4,10 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.finsightai.data.local.SessionManager
-import com.finsightai.data.repository.MockDataRepository
+import com.finsightai.data.network.RetrofitClient
+import com.finsightai.data.repository.TransactionRepositoryImpl
+import com.finsightai.domain.model.CategoryBreakdown
+import com.finsightai.domain.model.DashboardSummary
 import com.finsightai.domain.model.Transaction
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -15,38 +18,56 @@ import kotlinx.coroutines.launch
 import java.time.LocalTime
 
 data class HomeUiState(
+    val isLoading: Boolean = true,
+    val error: String? = null,
     val greeting: String = "",
     val userName: String = "",
-    val monthlySpend: Double = 0.0,
-    val topCategory: String = "",
-    val spendByCategory: Map<String, Double> = emptyMap(),
+    val summary: DashboardSummary = DashboardSummary(),
+    val categoryBreakdown: List<CategoryBreakdown> = emptyList(),
     val recentTransactions: List<Transaction> = emptyList()
-)
+) {
+    val isEmpty: Boolean get() = !isLoading && error == null && recentTransactions.isEmpty()
+}
 
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     private val sessionManager = SessionManager(application)
+    private val repository = TransactionRepositoryImpl(
+        RetrofitClient.buildTransactionApiService(sessionManager)
+    )
 
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
 
     init {
-        loadMockData()
+        loadDashboard()
         observeUserName()
     }
 
-    private fun loadMockData() {
-        val spendByCategory = MockDataRepository.getSpendByCategory()
-            .mapKeys { it.key.displayName }
-
-        _uiState.update { current ->
-            current.copy(
-                greeting = buildGreeting(),
-                monthlySpend = MockDataRepository.getMonthlySpend(),
-                topCategory = MockDataRepository.getTopCategory().displayName,
-                spendByCategory = spendByCategory,
-                recentTransactions = MockDataRepository.transactions.take(5)
-            )
+    fun loadDashboard() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, error = null) }
+            repository.getDashboard()
+                .onSuccess { data ->
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            summary = data.summary,
+                            categoryBreakdown = data.categoryBreakdown,
+                            recentTransactions = data.recentTransactions,
+                            greeting = buildGreeting()
+                        )
+                    }
+                }
+                .onFailure { ex ->
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            error = ex.message ?: "Failed to load dashboard",
+                            greeting = buildGreeting()
+                        )
+                    }
+                }
         }
     }
 

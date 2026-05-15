@@ -7,8 +7,9 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     APP_ENV: str = "development"
+    AI_BACKEND_URL: str = "http://localhost:8001"
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra":"allow"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "allow"}
 
 
 settings = Settings()

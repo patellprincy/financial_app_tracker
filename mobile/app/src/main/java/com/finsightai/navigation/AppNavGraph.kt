@@ -154,7 +154,13 @@ fun AppNavGraph(navController: NavHostController) {
 
         composable(NavRoutes.AddExpense.route) {
             AddExpenseScreen(
-                onNavigateBack = { navController.popBackStack() }
+                onNavigateBack = { navController.popBackStack() },
+                onSaveSuccess = {
+                    navController.previousBackStackEntry
+                        ?.savedStateHandle
+                        ?.set("transactionSaved", true)
+                    navController.popBackStack()
+                }
             )
         }
     }

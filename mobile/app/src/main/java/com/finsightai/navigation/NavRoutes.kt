@@ -5,6 +5,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.vectorResource
 import com.finsightai.R
 
+// sealed class; only the listed routes exists. Did this so that it is easy to maintain and if refactoring needed can be done as well
 sealed class NavRoutes(val route: String) {
     data object Splash : NavRoutes("splash")
     data object Onboarding : NavRoutes("onboarding")
@@ -12,6 +13,7 @@ sealed class NavRoutes(val route: String) {
     data object SignUp : NavRoutes("signup")
     data object Home : NavRoutes("home")
     data object Transactions : NavRoutes("transactions")
+    // dynamic route; requires a transaction ID
     data object TransactionDetail : NavRoutes("transaction_detail/{transactionId}") {
         fun createRoute(transactionId: String) = "transaction_detail/$transactionId"
     }

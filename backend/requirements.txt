@@ -11,3 +11,4 @@ slowapi
 python-dotenv
 email-validator
 groq
+httpx
