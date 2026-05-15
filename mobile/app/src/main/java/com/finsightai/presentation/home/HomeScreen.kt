@@ -31,6 +31,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -72,6 +73,17 @@ fun HomeScreen(
     viewModel: HomeViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+
+    val savedStateHandle = navController.currentBackStackEntry?.savedStateHandle
+    LaunchedEffect(savedStateHandle) {
+        savedStateHandle?.getStateFlow("transactionSaved", false)
+            ?.collect { saved ->
+                if (saved) {
+                    savedStateHandle.remove<Boolean>("transactionSaved")
+                    viewModel.loadDashboard()
+                }
+            }
+    }
 
     Scaffold(
         topBar = {
@@ -348,13 +360,13 @@ private fun SpendingCategoryCard(breakdown: CategoryBreakdown) {
             horizontalAlignment = Alignment.Start
         ) {
             Text(
-                text = "${breakdown.emoji} ${breakdown.categoryName}",
+                text = breakdown.categoryName,
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "₹${String.format(Locale.getDefault(), "%,.0f", breakdown.amount)}",
+                text = "$${String.format(Locale.getDefault(), "%,.0f", breakdown.amount)}",
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.SemiBold
@@ -385,8 +397,10 @@ private fun RecentTransactionItem(transaction: Transaction, onClick: () -> Unit)
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = transaction.category.emoji,
-                    style = MaterialTheme.typography.titleLarge
+                    text = transaction.categoryName.firstOrNull()?.uppercase() ?: "?",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
                 )
             }
             Spacer(modifier = Modifier.width(12.dp))
@@ -404,7 +418,7 @@ private fun RecentTransactionItem(transaction: Transaction, onClick: () -> Unit)
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text(
-                    text = "${if (transaction.type == TransactionType.INCOME) "+" else "-"}₹${
+                    text = "${if (transaction.type == TransactionType.INCOME) "+" else "-"}$${
                         String.format(Locale.getDefault(), "%,.0f", transaction.amount)
                     }",
                     style = MaterialTheme.typography.titleMedium,
@@ -412,7 +426,7 @@ private fun RecentTransactionItem(transaction: Transaction, onClick: () -> Unit)
                     fontWeight = FontWeight.SemiBold
                 )
                 CategoryChip(
-                    label = transaction.category.displayName,
+                    label = transaction.categoryName,
                     color = MaterialTheme.colorScheme.primary
                 )
             }
