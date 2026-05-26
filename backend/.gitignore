@@ -49,12 +49,3 @@ dist/
 *.swp
 *.tmp
 *.bak
-
-# ML dataset
-backend/ml/data/transactions_multiuser.csv
-
-# ML saved model binaries
-backend/ml/saved_models/*.pkl
-
-# Keep folder structure
-!backend/ml/saved_models/.gitkeep
