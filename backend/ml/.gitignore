@@ -23,3 +23,6 @@ Thumbs.db
 
 # Data Files
 data/transactions_multiuser.csv
+
+#Saved Models
+saved_models/*.pkl
