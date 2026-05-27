@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     APP_ENV: str = "development"
     AI_BACKEND_URL: str = "http://localhost:8001"
+    ML_SERVICE_URL: str = "http://localhost:8002"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "allow"}
 

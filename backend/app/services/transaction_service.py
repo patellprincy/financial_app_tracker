@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from app.models.category import Category
 from app.models.transaction import Transaction
@@ -10,6 +11,7 @@ from app.schemas.transaction import (
     DashboardResponse,
 )
 from app.services.classification_client import classify_transaction
+from app.services.ml_client import check_transaction_anomaly
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +29,11 @@ def _to_response(t: Transaction) -> TransactionResponse:
         confidence=t.confidence,
         reason=t.reason,
         created_at=t.created_at,
+        is_anomaly=t.is_anomaly,
+        anomaly_score=t.anomaly_score,
+        anomaly_reason=t.anomaly_reason,
+        anomaly_checked_at=t.anomaly_checked_at,
+        ml_model_version=t.ml_model_version,
     )
 
 
@@ -92,6 +99,27 @@ async def create_manual_transaction(
     db.commit()
     db.refresh(transaction)
     logger.info("Saved transaction id=%d for user=%s", transaction.id, user_id)
+
+    history = (
+        db.query(Transaction)
+        .filter(Transaction.user_id == user_id, Transaction.id != transaction.id)
+        .order_by(Transaction.created_at.desc())
+        .limit(200)
+        .all()
+    )
+
+    anomaly = await check_transaction_anomaly(transaction, history)
+    transaction.is_anomaly = anomaly["is_anomaly"]
+    transaction.anomaly_score = anomaly["anomaly_score"]
+    transaction.anomaly_reason = anomaly["anomaly_reason"]
+    transaction.ml_model_version = anomaly["ml_model_version"]
+    transaction.anomaly_checked_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(transaction)
+    logger.info(
+        "ML check complete — id=%d is_anomaly=%s score=%s",
+        transaction.id, transaction.is_anomaly, transaction.anomaly_score,
+    )
 
     return _to_response(transaction)
 
