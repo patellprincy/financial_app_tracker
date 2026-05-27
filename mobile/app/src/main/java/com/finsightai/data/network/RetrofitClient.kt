@@ -21,6 +21,9 @@ object RetrofitClient {
     fun buildTransactionApiService(sessionManager: SessionManager): TransactionApiService =
         buildRetrofit(sessionManager).create(TransactionApiService::class.java)
 
+    fun buildInsightsApiService(sessionManager: SessionManager): InsightsApiService =
+        buildRetrofit(sessionManager).create(InsightsApiService::class.java)
+
     private fun buildRetrofit(sessionManager: SessionManager): Retrofit {
         val client = OkHttpClient.Builder()
             .addInterceptor(AuthInterceptor(sessionManager))
