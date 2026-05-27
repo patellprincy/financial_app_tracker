@@ -9,7 +9,11 @@ from app.schemas.transaction import (
     CategoryBreakdownResponse,
     DashboardResponse,
 )
-from app.services.classification_client import classify_transaction
+
+
+from app.services.classification_service import classify_transaction
+from app.services.ml_service import check_transaction_anomaly
+
 
 logger = logging.getLogger(__name__)
 
