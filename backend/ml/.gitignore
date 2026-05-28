@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Virtual Environments
+venv/
+.venv/
+ml/venv/
+
+# Environment Variables
+.env
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Data Files
+data/transactions_multiuser.csv
+
+# Saved Models
+saved_models/*.pkl

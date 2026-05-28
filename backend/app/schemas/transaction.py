@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Optional
 from pydantic import BaseModel
 
 
@@ -20,6 +21,12 @@ class TransactionResponse(BaseModel):
     confidence: float
     reason: str
     created_at: datetime
+    is_anomaly: bool
+    anomaly_status: Optional[str] = None    # "normal" | "confirmed_anomaly" | "insufficient_history"
+    anomaly_score: Optional[float] = None
+    anomaly_reason: Optional[str] = None
+    anomaly_checked_at: Optional[datetime] = None
+    ml_model_version: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
