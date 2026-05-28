@@ -35,6 +35,7 @@ def _to_response(t: Transaction) -> TransactionResponse:
         reason=t.reason,
         created_at=t.created_at,
         is_anomaly=t.is_anomaly,
+        anomaly_status=t.anomaly_status,
         anomaly_score=t.anomaly_score,
         anomaly_reason=t.anomaly_reason,
         anomaly_checked_at=t.anomaly_checked_at,
@@ -115,6 +116,7 @@ async def create_manual_transaction(
 
     anomaly = await check_transaction_anomaly(transaction, history)
     transaction.is_anomaly = anomaly["is_anomaly"]
+    transaction.anomaly_status = anomaly["anomaly_status"]
     transaction.anomaly_score = anomaly["anomaly_score"]
     transaction.anomaly_reason = anomaly["anomaly_reason"]
     transaction.ml_model_version = anomaly["ml_model_version"]

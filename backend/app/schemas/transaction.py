@@ -22,6 +22,7 @@ class TransactionResponse(BaseModel):
     reason: str
     created_at: datetime
     is_anomaly: bool
+    anomaly_status: Optional[str] = None    # "normal" | "confirmed_anomaly" | "insufficient_history"
     anomaly_score: Optional[float] = None
     anomaly_reason: Optional[str] = None
     anomaly_checked_at: Optional[datetime] = None

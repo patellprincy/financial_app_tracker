@@ -27,6 +27,7 @@ class AnomalyResponse(BaseModel):
     transaction_id: str
     user_id: str
     is_anomaly: bool
+    anomaly_status: str         # "normal" | "confirmed_anomaly" | "insufficient_history"
     confidence: float           # probability of anomaly (0.0 – 1.0)
     reason: Optional[str]       # human-readable explanation; None when normal
-    model_version: str
+    model_version: Optional[str]

@@ -1,6 +1,7 @@
 import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.core.security import get_current_user
@@ -47,6 +48,12 @@ def get_insights(
         .filter(
             Transaction.user_id == current_user.id,
             Transaction.is_anomaly == True,  # noqa: E712 — SQLAlchemy requires == True
+            # Exclude cold-start transactions and user-dismissed anomalies.
+            # NULL anomaly_status (legacy rows) is treated as visible.
+            or_(
+                Transaction.anomaly_status == "confirmed_anomaly",
+                Transaction.anomaly_status == None,  # noqa: E711
+            ),
         )
         .order_by(Transaction.created_at.desc())
         .all()
