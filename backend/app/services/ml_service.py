@@ -12,6 +12,7 @@ _TIMEOUT_SECONDS = 10.0
 
 _FALLBACK: dict[str, Any] = {
     "is_anomaly": False,
+    "anomaly_status": None,
     "anomaly_score": None,
     "anomaly_reason": "ML anomaly check unavailable",
     "ml_model_version": None,
@@ -65,6 +66,7 @@ async def check_transaction_anomaly(
 
         result: dict[str, Any] = {
             "is_anomaly": bool(data.get("is_anomaly", False)),
+            "anomaly_status": data.get("anomaly_status"),
             "anomaly_score": float(data["confidence"]) if data.get("confidence") is not None else None,
             "anomaly_reason": data.get("reason"),
             "ml_model_version": data.get("model_version"),

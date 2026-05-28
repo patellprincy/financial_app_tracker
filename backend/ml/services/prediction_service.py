@@ -2,15 +2,22 @@
 Prediction service — supervised anomaly detection inference.
 
 Complete inference flow:
-  1. Receive transaction dict + history list from the API route.
-  2. Merge history + transaction into a single DataFrame.
-  3. Apply feature engineering to the full context (history gives behavioral baseline).
+  1. Apply safeguards (cold-start, same-amount, tolerance).  If any trigger,
+     return early without touching the ML model.
+  2. Receive transaction dict + history list and build a DataFrame.
+  3. Apply feature engineering to the full context.
   4. Extract the last row = the new transaction with all features computed.
   5. preprocessor.transform() — encode + scale using the fitted pipeline.
   6. model.predict() → is_anomaly (0 or 1)
      model.predict_proba() → [prob_normal, prob_anomaly]
   7. Build a human-readable reason string from the feature values.
-  8. Return is_anomaly, confidence (prob_anomaly), reason, model_version.
+  8. Return is_anomaly, anomaly_status, confidence, reason, model_version.
+
+Safeguard order (checked before the ML model runs):
+  1. Cold-start total: < 10 expense transactions in history → insufficient_history
+  2. Cold-start category: < 5 same-category transactions → insufficient_history
+  3. Same-amount: exact match (within $0.01) in same category → normal
+  4. Tolerance: amount within 20 % of category mean or max → normal
 
 Why history matters:
   amount_zscore and category_percentile are relative to the user's own history.
@@ -32,6 +39,11 @@ from preprocessing.pipeline import AnomalyPreprocessor
 logger = logging.getLogger(__name__)
 
 THRESHOLD = 0.3
+
+# Cold-start thresholds
+COLD_START_TOTAL_MIN    = 10   # minimum total expense transactions in history
+COLD_START_CATEGORY_MIN = 5    # minimum same-category expense transactions
+TOLERANCE_PCT           = 0.20  # 20 % band around category mean / max
 
 _MODEL_PATH        = os.getenv("RF_MODEL_PATH",        "saved_models/random_forest.pkl")
 _PREPROCESSOR_PATH = os.getenv("RF_PREPROCESSOR_PATH", "saved_models/preprocessor.pkl")
@@ -69,6 +81,74 @@ def _load_preprocessor() -> AnomalyPreprocessor:
     preprocessor = AnomalyPreprocessor.load(_PREPROCESSOR_PATH)
     logger.info("Preprocessor loaded — %d features", len(preprocessor.feature_columns))
     return preprocessor
+
+
+# ── Safeguards (run before ML model) ──────────────────────────────────────────
+
+def _apply_safeguards(transaction: dict, history: list[dict]) -> dict | None:
+    """
+    Return an early-exit result dict if a safeguard triggers, else None.
+
+    None means all safeguards passed — the caller should run the ML model.
+    """
+    category = str(transaction.get("category", ""))
+    amount   = float(transaction.get("amount", 0))
+    txn_id   = str(transaction.get("transaction_id", ""))
+    user_id  = str(transaction.get("user_id", ""))
+
+    expense_history  = [
+        h for h in history
+        if str(h.get("transaction_type", "")).lower() == "expense"
+    ]
+    category_history = [
+        h for h in expense_history
+        if str(h.get("category", "")) == category
+    ]
+
+    base = {
+        "transaction_id": txn_id,
+        "user_id":        user_id,
+        "confidence":     0.0,
+        "reason":         None,
+        "model_version":  None,
+    }
+
+    # 1. Cold-start: not enough total expense history
+    if len(expense_history) < COLD_START_TOTAL_MIN:
+        logger.info(
+            "txn=%s  cold-start: total_expense=%d < %d",
+            txn_id, len(expense_history), COLD_START_TOTAL_MIN,
+        )
+        return {**base, "is_anomaly": False, "anomaly_status": "insufficient_history"}
+
+    # 2. Cold-start: not enough category history
+    if len(category_history) < COLD_START_CATEGORY_MIN:
+        logger.info(
+            "txn=%s  cold-start: category=%r count=%d < %d",
+            txn_id, category, len(category_history), COLD_START_CATEGORY_MIN,
+        )
+        return {**base, "is_anomaly": False, "anomaly_status": "insufficient_history"}
+
+    category_amounts = [float(h.get("amount", 0)) for h in category_history]
+
+    # 3. Same-amount safeguard (exact match within $0.01 for floating-point safety)
+    if any(abs(amount - a) < 0.01 for a in category_amounts):
+        logger.info("txn=%s  same-amount match (%.2f) in category=%r → normal", txn_id, amount, category)
+        return {**base, "is_anomaly": False, "anomaly_status": "normal"}
+
+    # 4. Tolerance safeguard: within 20 % of category mean or max
+    cat_mean = sum(category_amounts) / len(category_amounts)
+    cat_max  = max(category_amounts)
+    within_mean = (abs(amount - cat_mean) / cat_mean <= TOLERANCE_PCT) if cat_mean > 0 else False
+    within_max  = (abs(amount - cat_max)  / cat_max  <= TOLERANCE_PCT) if cat_max  > 0 else False
+    if within_mean or within_max:
+        logger.info(
+            "txn=%s  tolerance: amount=%.2f within %.0f%% of mean=%.2f max=%.2f → normal",
+            txn_id, amount, TOLERANCE_PCT * 100, cat_mean, cat_max,
+        )
+        return {**base, "is_anomaly": False, "anomaly_status": "normal"}
+
+    return None  # all safeguards passed — run ML model
 
 
 # ── Inference helpers ──────────────────────────────────────────────────────────
@@ -142,16 +222,23 @@ def predict_anomaly(transaction: dict, history: list[dict]) -> dict:
     """
     Predict whether a transaction is anomalous.
 
+    Safeguards are checked first. If any trigger, the ML model is skipped and
+    an early result is returned with anomaly_status set accordingly.
+
     Args:
         transaction: dict matching TransactionInput schema.
         history:     list of recent past transaction dicts for the same user.
-                     Used to compute personalised behavioral features.
+                     Used for safeguard checks and behavioral feature computation.
 
     Returns:
         dict with keys:
-          transaction_id, user_id, is_anomaly (bool),
-          confidence (float 0-1), reason (str|None), model_version (str)
+          transaction_id, user_id, is_anomaly (bool), anomaly_status (str),
+          confidence (float 0-1), reason (str|None), model_version (str|None)
     """
+    early = _apply_safeguards(transaction, history)
+    if early is not None:
+        return early
+
     artifact     = _load_model()
     preprocessor = _load_preprocessor()
     model        = artifact["model"]
@@ -172,24 +259,27 @@ def predict_anomaly(transaction: dict, history: list[dict]) -> dict:
     proba           = model.predict_proba(X)[0]
     confidence      = float(proba[1])   # probability of class 1 = anomaly
 
-    reason = _build_reason(target_row, is_anomaly_pred, confidence)
+    reason         = _build_reason(target_row, is_anomaly_pred, confidence)
+    anomaly_status = "confirmed_anomaly" if is_anomaly_pred else "normal"
 
     result = {
         "transaction_id": str(transaction.get("transaction_id", "")),
         "user_id":        str(transaction.get("user_id", "")),
         "is_anomaly":     is_anomaly_pred,
+        "anomaly_status": anomaly_status,
         "confidence":     round(confidence, 4),
         "reason":         reason,
         "model_version":  artifact["model_version"],
     }
 
     logger.info(
-        "txn=%s  user=%s  amount=%.2f  category=%s → is_anomaly=%s  confidence=%.3f",
+        "txn=%s  user=%s  amount=%.2f  category=%s → is_anomaly=%s  status=%s  confidence=%.3f",
         result["transaction_id"],
         result["user_id"],
         transaction.get("amount"),
         transaction.get("category"),
         is_anomaly_pred,
+        anomaly_status,
         confidence,
     )
     return result

@@ -21,6 +21,7 @@ class Transaction(Base):
 
     # ML anomaly detection results
     is_anomaly = Column(Boolean, nullable=False, default=False)
+    anomaly_status = Column(String, nullable=True)   # "normal" | "confirmed_anomaly" | "insufficient_history"
     anomaly_score = Column(Float, nullable=True)
     anomaly_reason = Column(Text, nullable=True)
     anomaly_checked_at = Column(DateTime(timezone=True), nullable=True)
