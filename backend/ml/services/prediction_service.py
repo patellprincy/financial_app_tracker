@@ -172,48 +172,70 @@ def _build_context_df(transaction: dict, history: list[dict]) -> pd.DataFrame:
 
 
 def _build_reason(row: pd.Series, is_anomaly: bool, confidence: float) -> str | None:
-    """Build a human-readable explanation from feature values. Returns None for normal transactions."""
+    """
+    Return a short, user-friendly explanation for a flagged transaction.
+    Returns None for normal transactions.
+
+    Three signals are checked: high amount (z-score or percentile), high
+    category frequency in the past 7 days, and unusual transaction hour.
+    Each combination of signals produces a specific natural-language sentence
+    so the message always reads as flowing prose, not a semicolon list.
+    """
     if not is_anomaly:
         return None
 
-    reasons: list[str] = []
-    amount   = float(row.get("amount", 0))
     category = str(row.get("category", "this category"))
     zscore   = float(row.get("amount_zscore", 0))
     freq     = int(row.get("spending_freq_7d", 1))
     pct      = float(row.get("category_percentile", 0))
     hour     = int(row.get("hour", 12))
 
-    if zscore > 3.0:
-        reasons.append(
-            f"${amount:.2f} is {zscore:.1f} standard deviations above your normal "
-            f"{category} spending"
-        )
-    elif zscore > 2.0:
-        reasons.append(f"${amount:.2f} is unusually high for {category}")
+    high_amount  = zscore > 2.0 or pct > 0.95
+    high_freq    = freq > 5
+    unusual_time = 1 <= hour <= 4
 
-    if freq > 5:
-        reasons.append(
-            f"unusually high spending frequency: {freq} {category} "
-            f"transactions in the past 7 days"
-        )
+    # ── No signals → generic fallback ────────────────────────────────────────
+    if not high_amount and not high_freq and not unusual_time:
+        return "This transaction looks different from your usual spending pattern."
 
-    if 1 <= hour <= 4:
-        reasons.append(f"transaction occurred at an unusual hour ({hour}:00)")
+    # ── Single signal ─────────────────────────────────────────────────────────
+    if high_amount and not high_freq and not unusual_time:
+        return f"This is one of your higher {category} transactions."
 
-    if pct > 0.95:
-        reasons.append(
-            f"amount is in the top {(1 - pct) * 100:.0f}% of your "
-            f"{category} spending history"
+    if high_freq and not high_amount and not unusual_time:
+        return (
+            f"You've made {freq} {category} purchases in the past 7 days, "
+            f"which is higher than usual."
         )
 
-    if not reasons:
-        reasons.append(
-            f"spending pattern deviates from your learned behaviour "
-            f"(model confidence: {confidence * 100:.1f}%)"
+    if unusual_time and not high_amount and not high_freq:
+        return "This transaction happened at an unusual time — it may be worth reviewing."
+
+    # ── Two signals ───────────────────────────────────────────────────────────
+    if high_amount and high_freq and not unusual_time:
+        return (
+            f"This is one of your higher {category} transactions, "
+            f"and you've made {freq} purchases in this category recently."
         )
 
-    return "; ".join(reasons)
+    if high_amount and unusual_time and not high_freq:
+        return (
+            f"This is one of your higher {category} transactions, "
+            f"and it happened at an unusual time."
+        )
+
+    if high_freq and unusual_time and not high_amount:
+        return (
+            f"You've made {freq} {category} purchases in the past 7 days, "
+            f"and it also happened at an unusual time."
+        )
+
+    # ── All three signals ─────────────────────────────────────────────────────
+    return (
+        f"This is one of your higher {category} transactions. "
+        f"You've also made {freq} purchases in this category recently, "
+        f"and the transaction time was unusual."
+    )
 
 
 # ── Public entry point ─────────────────────────────────────────────────────────
