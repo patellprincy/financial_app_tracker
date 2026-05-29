@@ -8,6 +8,7 @@ from slowapi.errors import RateLimitExceeded
 from app.core.rate_limit import limiter
 from app.routes.auth import router as auth_router
 from app.routes.insights import router as insights_router
+from app.routes.statements import router as statements_router
 from app.routes.transactions import router as transaction_router
 
 logging.basicConfig(level=logging.INFO)
@@ -33,6 +34,7 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(transaction_router)
+app.include_router(statements_router)
 app.include_router(insights_router)
 
 
