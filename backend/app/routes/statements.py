@@ -1,11 +1,16 @@
+import logging
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
+from app.config import settings
 from app.database import get_db
 from app.core.security import get_current_user
 from app.models.user import User
 from app.models.statement_upload import StatementUpload
 from app.schemas.statement import ParsedTransactionPreview, StatementUploadResponse
 from app.services.statement_parser_service import debug_parse, parse_statement
+from app.services.statement_cleanup_client import ai_cleanup
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/statements", tags=["statements"])
 
@@ -17,10 +22,6 @@ async def debug_statement(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Returns raw pdfplumber diagnostics: extracted text, detected dates/amounts
-    per line, and table contents. Use this to understand why a PDF fails to parse.
-    """
     contents = await file.read()
     return debug_parse(contents)
 
@@ -45,6 +46,7 @@ async def upload_statement(
             detail=f"File size exceeds the {MAX_FILE_SIZE // (1024 * 1024)} MB limit.",
         )
 
+    # ── Save initial upload record ─────────────────────────────────────────
     record = StatementUpload(
         user_id=current_user.id,
         file_name=file.filename,
@@ -54,10 +56,32 @@ async def upload_statement(
     db.commit()
     db.refresh(record)
 
+    # ── Step 1: PDF parsing ────────────────────────────────────────────────
     result = parse_statement(contents)
+    candidates = result.transactions
 
-    record.status = "parsed" if result.transactions else "parse_failed"
-    record.total_transactions = len(result.transactions)
+    logger.info(
+        "statement_upload: parser candidates count=%d strategy=%s upload_id=%s",
+        len(candidates), result.parse_strategy, record.id,
+    )
+    logger.info(
+        "statement_upload: AI cleanup enabled=%s AI_BACKEND_URL=%s",
+        settings.AI_CLEANUP_ENABLED, settings.AI_BACKEND_URL,
+    )
+
+    # ── Step 2: Cleanup (rule pre-clean + optional AI) ────────────────────
+    # ai_cleanup() always runs; it does rule-based pre-clean first,
+    # then calls the AI microservice only when AI_CLEANUP_ENABLED=true.
+    final_transactions = await ai_cleanup(candidates)
+
+    logger.info(
+        "statement_upload: final preview count=%d upload_id=%s",
+        len(final_transactions), record.id,
+    )
+
+    # ── Step 3: Persist status ─────────────────────────────────────────────
+    record.status = "parsed" if final_transactions else "parse_failed"
+    record.total_transactions = len(final_transactions)
     db.commit()
     db.refresh(record)
 
@@ -65,7 +89,7 @@ async def upload_statement(
         upload_id=record.id,
         file_name=record.file_name,
         status=record.status,
-        total_transactions=len(result.transactions),
+        total_transactions=len(final_transactions),
         transactions=[
             ParsedTransactionPreview(
                 transaction_date=t.transaction_date,
@@ -73,7 +97,7 @@ async def upload_statement(
                 amount=t.amount,
                 raw_text=t.raw_text,
             )
-            for t in result.transactions
+            for t in final_transactions
         ],
         parse_error=result.error,
     )

@@ -56,6 +56,14 @@ async def startup_event():
             "Run sql/create_tables.sql in the Supabase SQL Editor before using auth endpoints."
         )
 
+    from app.config import settings
+    logger.info(
+        "STARTUP: AI cleanup — enabled=%s AI_BACKEND_URL=%s timeout=%ds",
+        settings.AI_CLEANUP_ENABLED,
+        settings.AI_BACKEND_URL,
+        settings.AI_CLEANUP_TIMEOUT_SECONDS,
+    )
+
     logger.info("=== startup diagnostics complete ===")
 
 
