@@ -1,4 +1,5 @@
 import logging
+from uuid import UUID
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 from app.config import settings
@@ -6,9 +7,15 @@ from app.database import get_db
 from app.core.security import get_current_user
 from app.models.user import User
 from app.models.statement_upload import StatementUpload
-from app.schemas.statement import ParsedTransactionPreview, StatementUploadResponse
+from app.schemas.statement import (
+    ParsedTransactionPreview,
+    StatementUploadResponse,
+    StatementImportRequest,
+    StatementImportResponse,
+)
 from app.services.statement_parser_service import debug_parse, parse_statement
 from app.services.statement_cleanup_client import ai_cleanup
+from app.services.statement_import_service import import_statement_transactions
 
 logger = logging.getLogger(__name__)
 
@@ -100,4 +107,30 @@ async def upload_statement(
             for t in final_transactions
         ],
         parse_error=result.error,
+    )
+
+
+@router.post(
+    "/{upload_id}/import",
+    response_model=StatementImportResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Import user-approved preview transactions",
+)
+async def import_statement(
+    upload_id: UUID,
+    request: StatementImportRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Import the transactions the user kept/edited on the Android preview screen.
+
+    Does NOT re-parse the PDF — it persists the already-reviewed rows, running
+    each through AI classification and ML anomaly detection.
+    """
+    return await import_statement_transactions(
+        upload_id=upload_id,
+        request=request,
+        user_id=current_user.id,
+        db=db,
     )

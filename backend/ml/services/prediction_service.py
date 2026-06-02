@@ -165,7 +165,13 @@ def _build_context_df(transaction: dict, history: list[dict]) -> pd.DataFrame:
     """
     all_rows = history + [transaction]
     df = pd.DataFrame(all_rows)
-    df["transaction_date"] = pd.to_datetime(df["transaction_date"])
+    # Dates arrive as ISO8601 strings from the backend, but with mixed precision
+    # (imported rows are midnight 'YYYY-MM-DDTHH:MM:SS+00:00'; manual rows carry
+    # microseconds). format="ISO8601" parses each element on its own so the two
+    # variants don't clash. errors="coerce" keeps one bad value from 500-ing.
+    df["transaction_date"] = pd.to_datetime(
+        df["transaction_date"], format="ISO8601", errors="coerce"
+    )
     df["amount"] = df["amount"].astype(float)
     df = df.sort_values("transaction_date").reset_index(drop=True)
     return df
