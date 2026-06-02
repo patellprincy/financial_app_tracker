@@ -129,6 +129,14 @@ fun AppNavGraph(navController: NavHostController) {
         composable(NavRoutes.Upload.route) {
             UploadScreen(
                 onNavigateToAddExpense = { navController.navigate(NavRoutes.AddExpense.route) },
+                // After a successful import, land on a fresh Home so its
+                // ViewModel re-runs loadDashboard() and shows the new data.
+                onNavigateHome = {
+                    navController.navigate(NavRoutes.Home.route) {
+                        popUpTo(NavRoutes.Home.route) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                },
                 navController = navController
             )
         }

@@ -70,6 +70,7 @@ import java.util.Locale
 @Composable
 fun UploadScreen(
     onNavigateToAddExpense: () -> Unit,
+    onNavigateHome: () -> Unit,
     navController: NavController,
     viewModel: UploadViewModel = viewModel()
 ) {
@@ -196,31 +197,69 @@ fun UploadScreen(
                         item { EmptyPreviewState(onRestoreAll = viewModel::resetPreview) }
                     }
 
-                    // Transaction rows with remove button
-                    itemsIndexed(
-                        items = uiState.visibleTransactions,
-                        key = { _, txn -> txn.rawText.hashCode() }
-                    ) { _, txn ->
-                        ExtractedTransactionRow(
-                            transaction = txn,
-                            onRemove = { viewModel.removeTransaction(txn) }
-                        )
-                    }
+                    if (uiState.importSuccess) {
+                        // ── Import complete ────────────────────────────────
+                        item {
+                            ImportSuccessCard(
+                                importedCount = uiState.importedCount,
+                                failedCount = uiState.failedCount
+                            )
+                        }
+                        item {
+                            Button(
+                                onClick = onNavigateHome,
+                                modifier = Modifier.fillMaxWidth().height(52.dp),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(ImageVector.vectorResource(R.drawable.home), null, Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Go to Dashboard", style = MaterialTheme.typography.labelLarge)
+                            }
+                        }
+                        item {
+                            OutlinedButton(
+                                onClick = viewModel::onReset,
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(ImageVector.vectorResource(R.drawable.cloud_upload), null)
+                                Spacer(Modifier.width(8.dp))
+                                Text("Upload Another File")
+                            }
+                        }
+                    } else {
+                        // Transaction rows with remove button
+                        itemsIndexed(
+                            items = uiState.visibleTransactions,
+                            key = { _, txn -> txn.rawText.hashCode() }
+                        ) { _, txn ->
+                            ExtractedTransactionRow(
+                                transaction = txn,
+                                onRemove = { viewModel.removeTransaction(txn) }
+                            )
+                        }
 
-                    // Import placeholder
-                    item {
-                        ImportPlaceholderSection(count = uiState.visibleTransactions.size)
-                    }
+                        // Import action (button + loading + error)
+                        item {
+                            ImportSection(
+                                count = uiState.visibleTransactions.size,
+                                isImporting = uiState.isImporting,
+                                importError = uiState.importError,
+                                onImport = viewModel::importSelectedTransactions
+                            )
+                        }
 
-                    item {
-                        OutlinedButton(
-                            onClick = viewModel::onReset,
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Icon(ImageVector.vectorResource(R.drawable.cloud_upload), null)
-                            Spacer(Modifier.width(8.dp))
-                            Text("Upload Another File")
+                        item {
+                            OutlinedButton(
+                                onClick = viewModel::onReset,
+                                enabled = !uiState.isImporting,
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(ImageVector.vectorResource(R.drawable.cloud_upload), null)
+                                Spacer(Modifier.width(8.dp))
+                                Text("Upload Another File")
+                            }
                         }
                     }
                 }
@@ -526,14 +565,20 @@ private fun ParseErrorCard(message: String) {
     }
 }
 
-// ── Import placeholder ─────────────────────────────────────────────────────
+// ── Import action section ──────────────────────────────────────────────────
 
 @Composable
-private fun ImportPlaceholderSection(count: Int) {
-    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+private fun ImportSection(
+    count: Int,
+    isImporting: Boolean,
+    importError: String?,
+    onImport: () -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Button(
-            onClick = { /* Phase 4 */ },
-            enabled = false,
+            onClick = onImport,
+            // Disabled when there is nothing to import or an import is in flight.
+            enabled = count > 0 && !isImporting,
             modifier = Modifier.fillMaxWidth().height(52.dp),
             shape = RoundedCornerShape(12.dp),
             colors = ButtonDefaults.buttonColors(
@@ -541,21 +586,82 @@ private fun ImportPlaceholderSection(count: Int) {
                 disabledContentColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.6f)
             )
         ) {
-            Icon(ImageVector.vectorResource(R.drawable.check_circle), null, Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text(
-                if (count > 0) "Import $count Transaction${if (count != 1) "s" else ""}"
-                else "No Transactions to Import",
-                style = MaterialTheme.typography.labelLarge
-            )
+            if (isImporting) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.onPrimary
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("Importing…", style = MaterialTheme.typography.labelLarge)
+            } else {
+                Icon(ImageVector.vectorResource(R.drawable.check_circle), null, Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    if (count > 0) "Import $count Transaction${if (count != 1) "s" else ""}"
+                    else "No Transactions to Import",
+                    style = MaterialTheme.typography.labelLarge
+                )
+            }
         }
-        Text(
-            "Transaction import will be available in the next update",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth()
-        )
+
+        // Friendly error — the button above doubles as retry.
+        if (importError != null) {
+            FinSightCard(containerColor = ExpenseRed.copy(alpha = 0.06f)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(ImageVector.vectorResource(R.drawable.error_outline), null, Modifier.size(18.dp), ExpenseRed)
+                    Text(
+                        importError,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ── Import success card ────────────────────────────────────────────────────
+
+@Composable
+private fun ImportSuccessCard(importedCount: Int, failedCount: Int) {
+    FinSightCard(containerColor = IncomeGreen.copy(alpha = 0.08f)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Icon(
+                imageVector = ImageVector.vectorResource(R.drawable.check_circle),
+                contentDescription = null,
+                tint = IncomeGreen,
+                modifier = Modifier.size(24.dp)
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    "Transactions imported successfully",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = IncomeGreen
+                )
+                Text(
+                    "$importedCount transaction${if (importedCount != 1) "s" else ""} imported",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                if (failedCount > 0) {
+                    Text(
+                        "$failedCount could not be imported",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = NeutralAmber
+                    )
+                }
+            }
+        }
     }
 }
 

@@ -59,7 +59,13 @@ data class UploadUiState(
     val removedTransactions: List<RemovedTransaction> = emptyList(),
     val totalExpense: Double = 0.0,
     val totalIncome: Double = 0.0,
-    val undoEvent: UndoEvent? = null      // non-null → show snackbar; cleared after consume
+    val undoEvent: UndoEvent? = null,     // non-null → show snackbar; cleared after consume
+    // Import (Phase 3B) — sending the approved rows to the backend
+    val isImporting: Boolean = false,
+    val importSuccess: Boolean = false,
+    val importError: String? = null,
+    val importedCount: Int = 0,
+    val failedCount: Int = 0
 )
 
 // ── ViewModel ─────────────────────────────────────────────────────────────
@@ -93,7 +99,12 @@ class UploadViewModel(
                     removedTransactions = emptyList(),
                     totalExpense = 0.0,
                     totalIncome = 0.0,
-                    undoEvent = null
+                    undoEvent = null,
+                    isImporting = false,
+                    importSuccess = false,
+                    importError = null,
+                    importedCount = 0,
+                    failedCount = 0
                 )
             }
             Log.d("UploadViewModel", "File selected: ${resolved.name}")
@@ -118,7 +129,12 @@ class UploadViewModel(
                             removedTransactions = emptyList(),
                             totalExpense = calcExpense(response.transactions),
                             totalIncome = calcIncome(response.transactions),
-                            undoEvent = null
+                            undoEvent = null,
+                            isImporting = false,
+                            importSuccess = false,
+                            importError = null,
+                            importedCount = 0,
+                            failedCount = 0
                         )
                     }
                 },
@@ -197,6 +213,58 @@ class UploadViewModel(
     /** Returns the transactions the user has approved for import. */
     fun getTransactionsReadyForImport(): List<ExtractedTransaction> =
         _uiState.value.visibleTransactions
+
+    // ── Import (Phase 3B) ────────────────────────────────────────────────────
+
+    /**
+     * Send only the visible (kept/edited) transactions to the backend import
+     * endpoint. No-op if there is nothing to import or an import is in flight.
+     */
+    fun importSelectedTransactions() {
+        val state = _uiState.value
+        val response = (state.uploadState as? UploadState.Success)?.response ?: return
+        val toImport = state.visibleTransactions
+        if (toImport.isEmpty() || state.isImporting) return
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isImporting = true, importError = null) }
+            Log.d("UploadViewModel", "Importing ${toImport.size} transactions for upload ${response.uploadId}")
+
+            repository.importStatementTransactions(response.uploadId, toImport).fold(
+                onSuccess = { result ->
+                    Log.d(
+                        "UploadViewModel",
+                        "Import success: imported=${result.importedCount} failed=${result.failedCount}"
+                    )
+                    _uiState.update {
+                        it.copy(
+                            isImporting = false,
+                            importSuccess = true,
+                            importError = null,
+                            importedCount = result.importedCount,
+                            failedCount = result.failedCount
+                        )
+                    }
+                },
+                onFailure = { ex ->
+                    Log.e("UploadViewModel", "Import failed: ${ex.message}")
+                    _uiState.update {
+                        it.copy(
+                            isImporting = false,
+                            importSuccess = false,
+                            // Friendly message only — never surface raw backend errors.
+                            importError = "Import failed. Please try again."
+                        )
+                    }
+                }
+            )
+        }
+    }
+
+    /** Dismiss the import error so the user can retry. */
+    fun clearImportError() {
+        _uiState.update { it.copy(importError = null) }
+    }
 
     // ── Full reset ─────────────────────────────────────────────────────────
 

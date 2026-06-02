@@ -4,7 +4,10 @@ import android.content.ContentResolver
 import android.net.Uri
 import android.util.Log
 import com.finsightai.data.network.StatementApiService
+import com.finsightai.data.network.StatementImportRequestDto
+import com.finsightai.data.network.StatementImportTransactionDto
 import com.finsightai.domain.model.ExtractedTransaction
+import com.finsightai.domain.model.StatementImportResult
 import com.finsightai.domain.model.StatementUploadResponse
 import com.finsightai.domain.repository.StatementRepository
 import kotlinx.coroutines.Dispatchers
@@ -60,4 +63,45 @@ class StatementRepositoryImpl(
                 else             -> Log.e("StatementRepo", "uploadStatement: ${ex.javaClass.simpleName} — ${ex.message}")
             }
         }
+
+    override suspend fun importStatementTransactions(
+        uploadId: String,
+        transactions: List<ExtractedTransaction>
+    ): Result<StatementImportResult> = runCatching {
+        Log.d("StatementRepo", "importStatementTransactions: uploadId=$uploadId count=${transactions.size}")
+
+        val request = StatementImportRequestDto(
+            transactions = transactions.map { t ->
+                StatementImportTransactionDto(
+                    transactionDate = t.transactionDate,
+                    description = t.description,
+                    amount = t.amount,
+                    rawText = t.rawText
+                )
+            }
+        )
+
+        val dto = withContext(Dispatchers.IO) {
+            apiService.importStatementTransactions(uploadId, request)
+        }
+
+        Log.d(
+            "StatementRepo",
+            "importStatementTransactions: success — status=${dto.status} " +
+                "imported=${dto.importedTransactions} failed=${dto.failedTransactions}"
+        )
+
+        StatementImportResult(
+            uploadId = dto.uploadId,
+            status = dto.status,
+            importedCount = dto.importedTransactions,
+            failedCount = dto.failedTransactions
+        )
+    }.onFailure { ex ->
+        when (ex) {
+            is HttpException -> Log.e("StatementRepo", "importStatementTransactions: HTTP ${ex.code()} — ${ex.message()}")
+            is IOException   -> Log.e("StatementRepo", "importStatementTransactions: IO error — ${ex.message}")
+            else             -> Log.e("StatementRepo", "importStatementTransactions: ${ex.javaClass.simpleName} — ${ex.message}")
+        }
+    }
 }
