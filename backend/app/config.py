@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     AI_BACKEND_URL: str = "http://localhost:8001"
     ML_SERVICE_URL: str = "http://localhost:8002"
+    # Statement cleanup via AI microservice
+    AI_CLEANUP_ENABLED: bool = False
+    AI_CLEANUP_TIMEOUT_SECONDS: int = 15
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "allow"}
 

@@ -4,6 +4,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from ai.routes.classify import router as classify_router
+from ai.routes.cleanup import router as cleanup_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -28,6 +29,7 @@ app.add_middleware(
 )
 
 app.include_router(classify_router)
+app.include_router(cleanup_router)
 
 
 @app.on_event("startup")
@@ -39,7 +41,7 @@ async def startup_event():
     logger.info("STARTUP: GROQ_API_KEY = %s", key_preview)
     if not settings.groq_api_key:
         logger.error("STARTUP: GROQ_API_KEY is missing — all classifications will fail")
-    logger.info("=== AI Classification Service ready on /classify ===")
+    logger.info("=== AI Classification Service ready on /classify and /statements/cleanup ===")
 
 
 @app.exception_handler(Exception)

@@ -56,6 +56,7 @@ import com.finsightai.ui.components.ErrorState
 import com.finsightai.ui.components.FinSightBottomNav
 import com.finsightai.ui.components.FinSightCard
 import com.finsightai.ui.components.SectionHeader
+import com.finsightai.ui.components.formatAmount
 import com.finsightai.ui.theme.ExpenseRed
 import com.finsightai.ui.theme.IncomeGreen
 import java.time.format.DateTimeFormatter
@@ -204,7 +205,9 @@ fun HomeScreen(
 
 @Composable
 private fun MonthlySpendCard(summary: DashboardSummary) {
-    val balance = summary.totalIncome - summary.totalExpenses
+    // totalExpenses arrives from the backend as a negative value (sum of
+    // signed expense amounts). Adding it to totalIncome gives the correct net.
+    val balance = summary.totalIncome + summary.totalExpenses
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -246,7 +249,7 @@ private fun MonthlySpendCard(summary: DashboardSummary) {
                         color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.9f)
                     )
                     Text(
-                        text = "$${String.format(Locale.getDefault(), "%,.0f", summary.totalExpenses)}",
+                        text = formatAmount(summary.totalExpenses),
                         style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.onPrimary,
                         fontWeight = FontWeight.SemiBold
@@ -265,7 +268,7 @@ private fun MonthlySpendCard(summary: DashboardSummary) {
                         color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.9f)
                     )
                     Text(
-                        text = "+$${String.format(Locale.getDefault(), "%,.0f", summary.totalIncome)}",
+                        text = formatAmount(summary.totalIncome),
                         style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.onPrimary,
                         fontWeight = FontWeight.SemiBold
@@ -293,7 +296,7 @@ private fun MonthlySpendCard(summary: DashboardSummary) {
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = "$${String.format(Locale.getDefault(), "%,.0f", balance)}",
+                        text = formatAmount(balance),
                         style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.onPrimary,
                         fontWeight = FontWeight.Bold
@@ -429,7 +432,7 @@ private fun SpendingCategoryCard(breakdown: CategoryBreakdown) {
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "$${String.format(Locale.getDefault(), "%,.0f", breakdown.amount)}",
+                text = formatAmount(breakdown.amount),
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.SemiBold
@@ -481,9 +484,7 @@ private fun RecentTransactionItem(transaction: Transaction, onClick: () -> Unit)
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text(
-                    text = "${if (transaction.type == TransactionType.INCOME) "+" else "-"}$${
-                        String.format(Locale.getDefault(), "%,.0f", transaction.amount)
-                    }",
+                    text = formatAmount(transaction.amount),
                     style = MaterialTheme.typography.titleMedium,
                     color = if (transaction.type == TransactionType.INCOME) IncomeGreen else ExpenseRed,
                     fontWeight = FontWeight.SemiBold
