@@ -13,6 +13,9 @@ class ParsedTransactionCandidate(BaseModel):
 
 class StatementCleanupRequest(BaseModel):
     transactions: list[ParsedTransactionCandidate]
+    # Context detected by the main backend: "credit_card" | "bank_account" |
+    # "unknown". Optional + defaulted so older callers stay compatible.
+    statement_type: Optional[str] = "unknown"
 
 
 class StatementCleanupResponse(BaseModel):

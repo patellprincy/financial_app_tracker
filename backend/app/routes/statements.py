@@ -68,18 +68,19 @@ async def upload_statement(
     candidates = result.transactions
 
     logger.info(
-        "statement_upload: parser candidates count=%d strategy=%s upload_id=%s",
-        len(candidates), result.parse_strategy, record.id,
+        "statement_upload: parser candidates count=%d strategy=%s statement_type=%s upload_id=%s",
+        len(candidates), result.parse_strategy, result.statement_type, record.id,
     )
     logger.info(
         "statement_upload: AI cleanup enabled=%s AI_BACKEND_URL=%s",
         settings.AI_CLEANUP_ENABLED, settings.AI_BACKEND_URL,
     )
 
-    # ── Step 2: Cleanup (rule pre-clean + optional AI) ────────────────────
-    # ai_cleanup() always runs; it does rule-based pre-clean first,
-    # then calls the AI microservice only when AI_CLEANUP_ENABLED=true.
-    final_transactions = await ai_cleanup(candidates)
+    # ── Step 2: Cleanup (rule pre-clean + optional AI + post-clean) ───────
+    # ai_cleanup() always runs deterministic rules before/after; it only calls
+    # the AI microservice when AI_CLEANUP_ENABLED=true. statement_type drives
+    # sign normalization for credit-card vs bank/chequing statements.
+    final_transactions = await ai_cleanup(candidates, result.statement_type)
 
     logger.info(
         "statement_upload: final preview count=%d upload_id=%s",

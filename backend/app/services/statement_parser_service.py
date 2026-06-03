@@ -28,6 +28,13 @@ from typing import Optional
 
 import pdfplumber
 
+from app.services.statement_normalizer import (
+    detect_statement_type,
+    detect_section,
+    is_non_transaction_line,
+    normalize_amount_sign,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -42,6 +49,9 @@ class ParsedTransaction:
     amount: float           # positive = credit/deposit, negative = debit/withdrawal
     raw_text: str
     _confidence: str = field(default="high", repr=False, compare=False)
+    # Section the row was extracted from (e.g. "purchases", "deposits"); used by
+    # sign normalization. Excluded from equality so dedup is unaffected.
+    section: Optional[str] = field(default=None, compare=False)
 
 
 @dataclass
@@ -49,6 +59,8 @@ class ParseResult:
     transactions: list = field(default_factory=list)
     parse_strategy: str = "failed"   # "table"|"text"|"block"|"text+block"|"failed"
     error: Optional[str] = None
+    # Detected statement context; internal only, not part of the API response.
+    statement_type: str = "unknown"
 
 
 # ============================================================
@@ -223,7 +235,11 @@ def parse_date(raw: Optional[str], ref_year: Optional[int] = None) -> Optional[s
 # Requires exactly 2 decimal places to filter out account/phone numbers.
 _AMOUNT_RE = re.compile(
     r"(?<![,\d])"
-    r"([+\-]?\s*\$?\s*\(?\d{1,3}(?:,\d{3})*\.\d{2}\)?(?:\s*(?:CR|DR)\b)?)"
+    # Integer part: either comma-grouped (1,234) OR plain digits (2000) — the
+    # plain-digits alt is required so 4+ digit amounts without a thousands
+    # separator (e.g. 2000.00) still parse. The trailing \.\d{2} keeps phone /
+    # account numbers out.
+    r"([+\-]?\s*\$?\s*\(?(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2}\)?(?:\s*(?:CR|DR)\b)?)"
     r"(?![,\d])",
     re.IGNORECASE,
 )
@@ -233,13 +249,16 @@ _CR_DR_SUFFIX_RE = re.compile(r"\s*(CR|DR)\s*$", re.IGNORECASE)
 # Broad matching — no strict \b so "VisaDebitpurchase" triggers "debit".
 _DEBIT_HINT_RE = re.compile(
     r"debit|withdrawal|payment|purchase|fee|charge|pos\b|dr\b"
-    r"|paid\s*out|money\s*out|\bsent\b|visa",
+    # \bsent\b misses "e-Transfersent" (no word boundary before s); the
+    # explicit transfersent variant catches the concatenated RBC/TD form.
+    r"|paid\s*out|money\s*out|\bsent\b|transfer\s*-?\s*sent|visa",
     re.IGNORECASE,
 )
 _CREDIT_HINT_RE = re.compile(
     r"credit|deposit|payroll|refund|transfer.{0,5}in|direct.{0,5}deposit"
     r"|salary|interest.{0,5}paid|cr\b|paid.{0,5}in|money.{0,5}in"
-    r"|received|autodeposit",
+    # catch "e-Transferreceived" (no space) and "e-Transfer-Autodeposit"
+    r"|transfer\s*-?\s*(received|autodeposit)",
     re.IGNORECASE,
 )
 
@@ -442,16 +461,21 @@ def _parse_table(table: list, ref_year: int) -> list[ParsedTransaction]:
             continue
 
         amount: Optional[float] = None
+        # Track which column the amount came from so sign normalization can
+        # honour separate debit/credit columns (debit => -, credit => +).
+        section: Optional[str] = None
         if amount_col is not None:
             amount = parse_amount(_cell(row, amount_col), raw_text)
         if amount is None and debit_col is not None:
             v = parse_amount(_cell(row, debit_col))
             if v is not None:
                 amount = -abs(v)
+                section = "withdrawals"
         if amount is None and credit_col is not None:
             v = parse_amount(_cell(row, credit_col))
             if v is not None:
                 amount = abs(v)
+                section = "deposits"
         if amount is None:
             continue
 
@@ -461,6 +485,7 @@ def _parse_table(table: list, ref_year: int) -> list[ParsedTransaction]:
             amount=amount,
             raw_text=raw_text,
             _confidence="high",
+            section=section,
         ))
     return results
 
@@ -519,14 +544,22 @@ def _parse_text_line(line: str, ref_year: int) -> Optional[ParsedTransaction]:
     )
 
 
-def _extract_text_transactions(pdf: pdfplumber.PDF, ref_year: int) -> list[ParsedTransaction]:
+def _extract_text_transactions(
+    pdf: pdfplumber.PDF, ref_year: int, statement_type: str = "unknown"
+) -> list[ParsedTransaction]:
     results: list[ParsedTransaction] = []
     for page_num, page in enumerate(pdf.pages, 1):
         text = page.extract_text() or ""
         logger.debug("Page %d — text length: %d chars.", page_num, len(text))
+        current_section: Optional[str] = None
         for line in text.splitlines():
+            section = detect_section(line, statement_type)
+            if section:
+                current_section = section
+                continue  # header line, not a transaction
             txn = _parse_text_line(line, ref_year)
             if txn:
+                txn.section = current_section
                 results.append(txn)
     logger.info("Strategy 2 (text-line) raw: %d.", len(results))
     return results
@@ -543,7 +576,9 @@ def _extract_text_transactions(pdf: pdfplumber.PDF, ref_year: int) -> list[Parse
 #      (Date printed only once per group of same-day transactions.)
 # ============================================================
 
-def _extract_block_transactions(pdf: pdfplumber.PDF, ref_year: int) -> list[ParsedTransaction]:
+def _extract_block_transactions(
+    pdf: pdfplumber.PDF, ref_year: int, statement_type: str = "unknown"
+) -> list[ParsedTransaction]:
     results: list[ParsedTransaction] = []
 
     for page_num, page in enumerate(pdf.pages, 1):
@@ -552,6 +587,7 @@ def _extract_block_transactions(pdf: pdfplumber.PDF, ref_year: int) -> list[Pars
             continue
 
         last_seen_date: Optional[str] = None
+        current_section: Optional[str] = None
 
         # Pending state in a dict so the inner flush() can mutate it cleanly.
         s: dict = {
@@ -560,6 +596,7 @@ def _extract_block_transactions(pdf: pdfplumber.PDF, ref_year: int) -> list[Pars
             "amount_raw": None,     # raw amount string (sign resolved at flush)
             "context":    "",       # full line text accumulated for sign inference
             "raw_lines":  [],
+            "section":    None,     # section the block started in
         }
 
         def flush() -> None:
@@ -569,6 +606,7 @@ def _extract_block_transactions(pdf: pdfplumber.PDF, ref_year: int) -> list[Pars
                 s["amount_raw"] = None
                 s["context"] = ""
                 s["raw_lines"] = []
+                s["section"] = None
                 return
 
             full_context = s["context"] + " " + " ".join(s["parts"])
@@ -582,6 +620,7 @@ def _extract_block_transactions(pdf: pdfplumber.PDF, ref_year: int) -> list[Pars
                         amount=amount,
                         raw_text=" | ".join(s["raw_lines"]),
                         _confidence="low",
+                        section=s["section"],
                     ))
 
             s["date"] = None
@@ -589,10 +628,18 @@ def _extract_block_transactions(pdf: pdfplumber.PDF, ref_year: int) -> list[Pars
             s["amount_raw"] = None
             s["context"] = ""
             s["raw_lines"] = []
+            s["section"] = None
 
         for raw_line in text.splitlines():
             line = raw_line.strip()
             if not line or is_summary_line(line):
+                continue
+
+            # Section header? Switch context and skip the line.
+            section = detect_section(line, statement_type)
+            if section:
+                flush()
+                current_section = section
                 continue
 
             date_m = _DATE_RE.match(line)
@@ -605,6 +652,7 @@ def _extract_block_transactions(pdf: pdfplumber.PDF, ref_year: int) -> list[Pars
                     continue
                 last_seen_date = iso_date
                 s["date"] = iso_date
+                s["section"] = current_section
                 s["raw_lines"].append(line)
                 s["context"] += " " + line
 
@@ -657,6 +705,7 @@ def _extract_block_transactions(pdf: pdfplumber.PDF, ref_year: int) -> list[Pars
                                 amount=amount,
                                 raw_text=line,
                                 _confidence="low",
+                                section=current_section,
                             ))
 
                 else:
@@ -670,6 +719,7 @@ def _extract_block_transactions(pdf: pdfplumber.PDF, ref_year: int) -> list[Pars
                         elif last_seen_date is not None and s["date"] is None:
                             # Start a new pending block using last_seen_date.
                             s["date"] = last_seen_date
+                            s["section"] = current_section
                             s["parts"].append(line)
                             s["context"] += " " + line
                             s["raw_lines"].append(line)
@@ -731,6 +781,47 @@ def debug_parse(pdf_bytes: bytes) -> dict:
 
 
 # ============================================================
+# Pre-AI finalization: noise filter → sign normalization → dedup.
+#
+# This runs BEFORE the AI cleanup service sees the candidates. Correct
+# signs here so the AI receives properly-signed input and only needs to
+# handle ambiguous edge cases. The AI cleanup service still has final
+# authority — its output is returned verbatim without any post-AI
+# deterministic override in statement_cleanup_client.py.
+# ============================================================
+
+def _finalize(
+    txns: list[ParsedTransaction], strategy: str, statement_type: str
+) -> list[ParsedTransaction]:
+    raw_count = len(txns)
+
+    kept = [t for t in txns if not is_non_transaction_line(f"{t.description} {t.raw_text}")]
+    dropped = raw_count - len(kept)
+
+    sign_changes = 0
+    for t in kept:
+        new_amount = normalize_amount_sign(
+            amount=t.amount,
+            description=t.description,
+            statement_type=statement_type,
+            section_context=t.section,
+            raw_text=t.raw_text,
+        )
+        if (new_amount < 0) != (t.amount < 0):
+            sign_changes += 1
+        t.amount = new_amount
+
+    deduped = deduplicate_transactions(kept)
+
+    logger.info(
+        "parse_statement: strategy=%s statement_type=%s raw=%d "
+        "dropped_metadata=%d sign_changes=%d final=%d",
+        strategy, statement_type, raw_count, dropped, sign_changes, len(deduped),
+    )
+    return deduped
+
+
+# ============================================================
 # Public API
 # ============================================================
 
@@ -751,18 +842,26 @@ def parse_statement(pdf_bytes: bytes) -> ParseResult:
 
             ref_year = datetime.now().year
 
+            # ── Detect statement context once, up front ───────────────────
+            all_text = "\n".join((page.extract_text() or "") for page in pdf.pages)
+            statement_type = detect_statement_type(all_text)
+            logger.info("parse_statement: detected statement_type=%s", statement_type)
+
             # ── Strategy 1: Table extraction ──────────────────────────────
-            table_txns = deduplicate_transactions(
-                _extract_table_transactions(pdf, ref_year)
+            table_txns = _finalize(
+                _extract_table_transactions(pdf, ref_year), "table", statement_type
             )
-            logger.info("Strategy 1 final: %d transaction(s).", len(table_txns))
             if table_txns:
-                return ParseResult(transactions=table_txns, parse_strategy="table")
+                return ParseResult(
+                    transactions=table_txns,
+                    parse_strategy="table",
+                    statement_type=statement_type,
+                )
 
             # ── Scanned-PDF early exit ─────────────────────────────────────
-            all_text = "".join((page.extract_text() or "") for page in pdf.pages)
             if not all_text.strip():
                 return ParseResult(
+                    statement_type=statement_type,
                     error=(
                         "No readable text found. "
                         "This PDF may be scanned/image-based and requires OCR."
@@ -772,25 +871,27 @@ def parse_statement(pdf_bytes: bytes) -> ParseResult:
             # ── Strategies 2 + 3: run both, merge, dedup ──────────────────
             # Strategy 2: complete single-line transactions (date + amount same line).
             # Strategy 3: multi-line blocks and date-less same-day transactions.
-            text_txns  = _extract_text_transactions(pdf, ref_year)
-            block_txns = _extract_block_transactions(pdf, ref_year)
+            text_txns  = _extract_text_transactions(pdf, ref_year, statement_type)
+            block_txns = _extract_block_transactions(pdf, ref_year, statement_type)
 
-            combined = deduplicate_transactions(text_txns + block_txns)
-            logger.info(
-                "Strategies 2+3 — text: %d, block: %d, combined: %d.",
-                len(text_txns), len(block_txns), len(combined),
-            )
+            if text_txns and block_txns:
+                strategy = "text+block"
+            elif text_txns:
+                strategy = "text"
+            else:
+                strategy = "block"
+
+            combined = _finalize(text_txns + block_txns, strategy, statement_type)
 
             if combined:
-                if text_txns and block_txns:
-                    strategy = "text+block"
-                elif text_txns:
-                    strategy = "text"
-                else:
-                    strategy = "block"
-                return ParseResult(transactions=combined, parse_strategy=strategy)
+                return ParseResult(
+                    transactions=combined,
+                    parse_strategy=strategy,
+                    statement_type=statement_type,
+                )
 
             return ParseResult(
+                statement_type=statement_type,
                 error=(
                     "No transactions found. "
                     "The PDF may be scanned/image-based or use an unsupported layout."

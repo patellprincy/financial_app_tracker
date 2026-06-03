@@ -180,18 +180,24 @@ def _validate_and_parse(raw_json: str, fallback: list[dict]) -> tuple[list[dict]
 
 # ── Main service ───────────────────────────────────────────────────────────
 
-def clean_statement_transactions(candidates: list[dict]) -> list[dict]:
+def clean_statement_transactions(
+    candidates: list[dict], statement_type: str = "unknown"
+) -> list[dict]:
     """
     Send candidate rows to the LLM for noise filtering and sign correction.
 
     The static system prompt is loaded via prompt_loader (@lru_cache — disk
-    read once per worker lifetime).  Candidate rows are always passed
-    dynamically as the user message and are NEVER cached.
+    read once per worker lifetime).  Candidate rows + the detected
+    statement_type are always passed dynamically as the user message and are
+    NEVER cached.
 
     On any per-chunk error the original chunk is kept so the caller always
     receives at least the raw parser output.
     """
-    logger.info("statement_cleanup: request received candidate_count=%d", len(candidates))
+    logger.info(
+        "statement_cleanup: request received candidate_count=%d statement_type=%s",
+        len(candidates), statement_type,
+    )
 
     if not candidates:
         return candidates
@@ -220,7 +226,10 @@ def clean_statement_transactions(candidates: list[dict]) -> list[dict]:
             "statement_cleanup: chunk %d/%d sending %d candidates",
             idx, len(chunks), len(chunk),
         )
-        user_message = json.dumps({"transactions": chunk}, ensure_ascii=False)
+        user_message = json.dumps(
+            {"statement_type": statement_type, "transactions": chunk},
+            ensure_ascii=False,
+        )
 
         try:
             response = client.chat.completions.create(

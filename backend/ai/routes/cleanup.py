@@ -12,7 +12,7 @@ router = APIRouter()
 @router.post("/statements/cleanup", response_model=StatementCleanupResponse)
 def cleanup_statement(request: StatementCleanupRequest) -> StatementCleanupResponse:
     candidates = [t.model_dump() for t in request.transactions]
-    cleaned = clean_statement_transactions(candidates)
+    cleaned = clean_statement_transactions(candidates, request.statement_type or "unknown")
     return StatementCleanupResponse(
         transactions=[ParsedTransactionCandidate(**t) for t in cleaned]
     )

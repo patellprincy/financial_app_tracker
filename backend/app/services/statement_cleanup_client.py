@@ -2,14 +2,17 @@
 Async HTTP client that calls the AI microservice POST /statements/cleanup endpoint.
 
 Design:
-  - Never raises: every error path is caught, logged with a reason, and the
-    original candidate list is returned so the upload never fails.
-  - Deterministic pre-clean runs FIRST (no LLM cost) to strip obvious noise.
-  - AI call runs second when AI_CLEANUP_ENABLED=true.
+  - The AI cleanup service is the final authority on which rows to keep and what
+    signs to assign. Its output is returned verbatim to the caller.
+  - No deterministic noise filtering, sign normalization, or deduplication is
+    applied after the AI responds.
+  - Fallback: if the AI service is unavailable or returns nothing usable, the
+    raw parser candidates are returned as-is so the upload always completes.
+  - The caller (statement_parser_service) has already deduplicated structural
+    duplicates, so the AI receives a compact, unmodified candidate set.
 """
 
 import logging
-import re
 import httpx
 from app.config import settings
 from app.services.statement_parser_service import ParsedTransaction
@@ -18,87 +21,43 @@ logger = logging.getLogger(__name__)
 
 _CLEANUP_PATH = "/statements/cleanup"
 
-# ── Deterministic pre-clean ────────────────────────────────────────────────
-# Generic patterns that are never real transactions, regardless of bank.
-# Uses \s* so "OpeningBalance" and "Opening Balance" both match.
 
-_NOISE_RE = re.compile(
-    r"""
-    \b(
-        opening\s*balance | closing\s*balance | previous\s*balance
-      | new\s*balance     | balance\s*forward | balance\s*brought\s*forward
-      | amount\s+due      | total\s+amount\s+due | payment\s+due
-      | minimum\s*payment | minimum\s+due
-      | available\s*credit | credit\s+limit
-      | rewards?\s+summary | cash\s*back\s+summary | points\s+summary
-      | rewards?\s+redeemed
-      | \btotals?\b | sub\s*-?\s*total | grand\s+total
-      | total\s+withdrawals | total\s+deposits
-      | statement\s+period | statement\s+date | statement\s+balance
-      | account\s+(?:number|no\.?|summary|information)
-      | (?:^|\s)page\s+\d
-    )\b
-    """,
-    re.IGNORECASE | re.VERBOSE,
-)
-
-
-def _rule_pre_clean(
+async def ai_cleanup(
     candidates: list[ParsedTransaction],
-) -> tuple[list[ParsedTransaction], int]:
+    statement_type: str = "unknown",
+) -> list[ParsedTransaction]:
     """
-    Fast deterministic filter applied before the AI call.
-    Returns (kept_candidates, removed_count).
-    """
-    kept = [c for c in candidates if not _NOISE_RE.search(c.description)]
-    return kept, len(candidates) - len(kept)
+    Send parser candidates to the AI cleanup service and return its output
+    directly.
 
-
-# ── AI cleanup client ──────────────────────────────────────────────────────
-
-async def ai_cleanup(candidates: list[ParsedTransaction]) -> list[ParsedTransaction]:
-    """
-    Clean statement candidates:
-      1. Deterministic rule pre-clean (always runs, free).
-      2. AI microservice call (only when AI_CLEANUP_ENABLED=true).
-
-    On any failure returns the best available candidate list and logs the reason.
+    - When AI_CLEANUP_ENABLED=false: returns candidates as-is.
+    - When the AI call succeeds: returns AI rows verbatim (no post-processing).
+    - When the AI call fails for any reason: returns candidates as-is and logs
+      the reason.
     """
     if not candidates:
         return candidates
 
-    # ── Step 1: Deterministic pre-clean ───────────────────────────────────
-    after_rules, rules_removed = _rule_pre_clean(candidates)
+    ai_enabled = settings.AI_CLEANUP_ENABLED
     logger.info(
-        "statement_upload: rule pre-clean removed=%d kept=%d",
-        rules_removed, len(after_rules),
+        "statement_upload: AI cleanup enabled=%s statement_type=%s candidate_count=%d",
+        ai_enabled, statement_type, len(candidates),
     )
 
-    ai_enabled = settings.AI_CLEANUP_ENABLED
-    logger.info("statement_upload: AI cleanup enabled=%s", ai_enabled)
-
     if not ai_enabled:
-        logger.info(
-            "statement_upload: AI cleanup skipped (AI_CLEANUP_ENABLED=false) "
-            "final preview count=%d",
-            len(after_rules),
-        )
-        return after_rules
+        logger.info("statement_upload: AI cleanup skipped — returning parser candidates as-is")
+        return candidates
 
-    if not after_rules:
-        logger.info("statement_upload: 0 candidates after rule pre-clean — skipping AI call")
-        return after_rules
-
-    # ── Step 2: AI microservice call ───────────────────────────────────────
     url = settings.AI_BACKEND_URL.rstrip("/") + _CLEANUP_PATH
     timeout = settings.AI_CLEANUP_TIMEOUT_SECONDS
 
     logger.info(
         "statement_upload: calling AI cleanup endpoint=%s candidate_count=%d timeout=%ds",
-        url, len(after_rules), timeout,
+        url, len(candidates), timeout,
     )
 
     payload = {
+        "statement_type": statement_type,
         "transactions": [
             {
                 "transaction_date": t.transaction_date,
@@ -106,56 +65,52 @@ async def ai_cleanup(candidates: list[ParsedTransaction]) -> list[ParsedTransact
                 "amount":           t.amount,
                 "raw_text":         t.raw_text,
             }
-            for t in after_rules
-        ]
+            for t in candidates
+        ],
     }
-
-    fallback_reason: str | None = None
 
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(url, json=payload)
             response.raise_for_status()
-            data = response.json()          # body buffered; safe inside context
+            data = response.json()
 
         rows = data.get("transactions", [])
-
-        cleaned: list[ParsedTransaction] = []
+        parsed: list[ParsedTransaction] = []
         for row in rows:
             try:
-                cleaned.append(ParsedTransaction(
+                parsed.append(ParsedTransaction(
                     transaction_date=str(row["transaction_date"]),
                     description=str(row["description"]),
                     amount=float(row["amount"]),
                     raw_text=str(row["raw_text"]),
                 ))
-            except (KeyError, ValueError, TypeError) as e:
-                logger.warning(
-                    "statement_upload: skipping malformed AI response row (%s)", e
-                )
+            except (KeyError, ValueError, TypeError) as exc:
+                logger.warning("statement_upload: skipping malformed AI row (%s)", exc)
 
-        if not cleaned:
-            fallback_reason = "AI returned 0 valid rows"
-        else:
-            logger.info(
-                "statement_upload: AI cleanup success input_count=%d output_count=%d",
-                len(after_rules), len(cleaned),
+        if not parsed:
+            logger.warning(
+                "statement_upload: AI returned 0 valid rows — falling back to parser candidates"
             )
-            return cleaned
+            return candidates
+
+        logger.info(
+            "statement_upload: AI cleanup success input=%d output=%d",
+            len(candidates), len(parsed),
+        )
+        return parsed
 
     except httpx.TimeoutException:
-        fallback_reason = f"timeout after {timeout}s"
-    except httpx.HTTPStatusError as e:
-        fallback_reason = f"HTTP {e.response.status_code} from AI service"
+        reason = f"timeout after {timeout}s"
+    except httpx.HTTPStatusError as exc:
+        reason = f"HTTP {exc.response.status_code} from AI service"
     except httpx.ConnectError:
-        fallback_reason = f"cannot connect to AI service at {url}"
-    except Exception as e:
-        fallback_reason = f"unexpected error: {type(e).__name__}: {e}"
+        reason = f"cannot connect to AI service at {url}"
+    except Exception as exc:
+        reason = f"unexpected error: {type(exc).__name__}: {exc}"
 
-    # ── Fallback ───────────────────────────────────────────────────────────
     logger.warning(
-        "statement_upload: AI cleanup fallback used reason=%s — "
-        "returning rule-cleaned candidates count=%d",
-        fallback_reason, len(after_rules),
+        "statement_upload: AI cleanup failed (%s) — returning parser candidates as-is count=%d",
+        reason, len(candidates),
     )
-    return after_rules
+    return candidates
