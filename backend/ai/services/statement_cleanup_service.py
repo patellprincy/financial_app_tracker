@@ -2,8 +2,8 @@ import json
 import logging
 import re
 from groq import Groq
-from ai.core.config import settings
-from ai.services.prompt_loader import get_statement_cleanup_prompt
+from core.config import settings
+from services.prompt_loader import get_statement_cleanup_prompt
 
 logger = logging.getLogger(__name__)
 

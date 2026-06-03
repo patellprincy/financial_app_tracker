@@ -26,7 +26,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from ai.api.routes import router as ai_router
+from api.routes import router as ai_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -57,7 +57,7 @@ app.include_router(ai_router)
 
 @app.on_event("startup")
 async def startup_event() -> None:
-    from ai.core.config import settings
+    from core.config import settings
     logger.info("=== FinSight AI Microservice starting on port 8001 ===")
     logger.info("STARTUP: model=%s  env=%s", settings.groq_model, settings.ai_env)
     key_set = bool(settings.groq_api_key)

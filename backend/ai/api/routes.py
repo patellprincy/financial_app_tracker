@@ -10,14 +10,14 @@ Three endpoints:
 
 from fastapi import APIRouter
 
-from ai.schemas.classification_schema import ClassifyRequest, ClassifyResponse
-from ai.schemas.statement_cleanup_schema import (
+from schemas.classification_schema import ClassifyRequest, ClassifyResponse
+from schemas.statement_cleanup_schema import (
     StatementCleanupRequest,
     StatementCleanupResponse,
     ParsedTransactionCandidate,
 )
-from ai.services.api_service import classify_transaction
-from ai.services.statement_cleanup_service import clean_statement_transactions
+from services.api_service import classify_transaction
+from services.statement_cleanup_service import clean_statement_transactions
 
 router = APIRouter()
 
@@ -43,7 +43,7 @@ def cleanup_statement(request: StatementCleanupRequest) -> StatementCleanupRespo
 
 @router.get("/health")
 def health() -> dict:
-    from ai.core.config import settings
+    from core.config import settings
     return {
         "status": "ok",
         "service": settings.ai_service_name,

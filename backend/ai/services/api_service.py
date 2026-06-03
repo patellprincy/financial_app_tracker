@@ -1,8 +1,8 @@
 import json
 from groq import Groq
-from ai.core.config import settings
-from ai.services.category_normalizer import normalize_category
-from ai.services.prompt_loader import get_classification_prompt_template
+from core.config import settings
+from services.category_normalizer import normalize_category
+from services.prompt_loader import get_classification_prompt_template
 
 _FALLBACK = {
     "transaction_type": "expense",
