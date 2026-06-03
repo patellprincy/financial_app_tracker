@@ -12,6 +12,7 @@ import com.finsightai.domain.repository.TransactionRepository
 import retrofit2.HttpException
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+import kotlin.math.abs
 
 class TransactionRepositoryImpl(
     private val apiService: TransactionApiService
@@ -64,7 +65,7 @@ class TransactionRepositoryImpl(
         Log.d("TransactionRepo", "getDashboard: success")
 
         val topCategory = response.categoryBreakdown
-            .maxByOrNull { it.amount }
+            .maxByOrNull { abs(it.amount) }
             ?.categoryName
             ?: ""
 

@@ -45,6 +45,7 @@ import com.finsightai.domain.model.Transaction
 import com.finsightai.domain.model.TransactionType
 import com.finsightai.ui.components.ErrorState
 import com.finsightai.ui.components.FinSightCard
+import com.finsightai.ui.components.formatAmountWithCents
 import com.finsightai.ui.theme.ExpenseRed
 import com.finsightai.ui.theme.IncomeGreen
 import java.time.format.DateTimeFormatter
@@ -163,9 +164,7 @@ private fun TransactionDetailContent(transaction: Transaction, modifier: Modifie
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "${if (transaction.type == TransactionType.INCOME) "+" else "-"}$${
-                        String.format(Locale.getDefault(), "%,.2f", transaction.amount)
-                    }",
+                    text = formatAmountWithCents(transaction.amount),
                     style = MaterialTheme.typography.displayLarge,
                     color = if (transaction.type == TransactionType.INCOME) IncomeGreen else ExpenseRed,
                     fontWeight = FontWeight.Bold

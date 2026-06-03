@@ -49,6 +49,7 @@ import com.finsightai.ui.components.EmptyState
 import com.finsightai.ui.components.ErrorState
 import com.finsightai.ui.components.FinSightBottomNav
 import com.finsightai.ui.components.FinSightCard
+import com.finsightai.ui.components.formatAmount
 import com.finsightai.ui.theme.ExpenseRed
 import com.finsightai.ui.theme.IncomeGreen
 import java.time.format.DateTimeFormatter
@@ -215,9 +216,7 @@ private fun TransactionListItem(transaction: Transaction, onClick: () -> Unit) {
                 )
             }
             Text(
-                text = "${if (transaction.type == TransactionType.INCOME) "+" else "-"}$${
-                    String.format(Locale.getDefault(), "%,.0f", transaction.amount)
-                }",
+                text = formatAmount(transaction.amount),
                 style = MaterialTheme.typography.titleMedium,
                 color = if (transaction.type == TransactionType.INCOME) IncomeGreen else ExpenseRed,
                 fontWeight = FontWeight.SemiBold
