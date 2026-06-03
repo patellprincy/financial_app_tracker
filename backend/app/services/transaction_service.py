@@ -93,7 +93,7 @@ async def create_manual_transaction(
     transaction = Transaction(
         user_id=user_id,
         merchant=request.merchant,
-        amount=request.amount,
+        amount=abs(request.amount),
         notes=request.notes,
         transaction_type=classification["transaction_type"],
         category_id=category.id,
