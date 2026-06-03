@@ -205,9 +205,9 @@ fun HomeScreen(
 
 @Composable
 private fun MonthlySpendCard(summary: DashboardSummary) {
-    // totalExpenses arrives from the backend as a negative value (sum of
-    // signed expense amounts). Adding it to totalIncome gives the correct net.
-    val balance = summary.totalIncome + summary.totalExpenses
+    // Both totalIncome and totalExpenses are now positive unsigned values.
+    // Direction is determined by transaction_type, not sign.
+    val balance = summary.totalIncome - summary.totalExpenses
 
     Card(
         modifier = Modifier.fillMaxWidth(),

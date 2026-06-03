@@ -283,7 +283,7 @@ async def import_statement_transactions(
             transaction = Transaction(
                 user_id=user_id,
                 merchant=p.description,
-                amount=p.item.amount,
+                amount=abs(p.item.amount),
                 notes=p.item.raw_text or "",
                 transaction_type=p.transaction_type,
                 category_id=category.id,
