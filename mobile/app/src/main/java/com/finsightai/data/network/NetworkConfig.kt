@@ -1,5 +1,5 @@
 package com.finsightai.data.network
 
 object NetworkConfig {
-    const val BASE_URL = "http://192.168.2.162:8000/"
+    const val BASE_URL = "https://financial-app-tracker.onrender.com/"
 }
