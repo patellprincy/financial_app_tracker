@@ -1,12 +1,22 @@
 from datetime import datetime
-from typing import Optional
-from pydantic import BaseModel
+from typing import Literal, Optional
+from pydantic import BaseModel, field_validator
 
 
 class ManualTransactionRequest(BaseModel):
     merchant: str
     amount: float
     notes: str
+    transaction_type: Optional[Literal["expense", "income"]] = None
+
+    @field_validator("transaction_type", mode="before")
+    @classmethod
+    def normalise_transaction_type(cls, v):
+        if isinstance(v, str):
+            v = v.strip().lower()
+            if v not in ("expense", "income"):
+                raise ValueError("transaction_type must be 'expense' or 'income'")
+        return v
 
 
 class TransactionResponse(BaseModel):
