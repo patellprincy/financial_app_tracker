@@ -71,9 +71,13 @@ def _get_or_create_category(
 async def create_manual_transaction(
     request: ManualTransactionRequest, user_id, db: Session
 ) -> TransactionResponse:
-    # Derive the expected transaction type from the amount sign so we can use
-    # it as part of the merchant cache key (same key used by the import path).
-    preliminary_type = "expense" if request.amount < 0 else "income"
+    # Use the explicit transaction_type when provided by the client (preferred).
+    # Fall back to sign-based inference so existing clients without the field
+    # continue to work (negative amount → expense, positive → income).
+    if request.transaction_type in ("expense", "income"):
+        preliminary_type = request.transaction_type
+    else:
+        preliminary_type = "expense" if request.amount < 0 else "income"
     normalized = normalize_merchant(request.merchant)
 
     # ── Cache lookup ──────────────────────────────────────────────────────────
