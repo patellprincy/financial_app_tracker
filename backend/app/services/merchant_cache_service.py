@@ -129,10 +129,14 @@ def save_classification_to_cache(
     Persist an AI classification result to the merchant cache.
 
     Rules:
+    - The stored transaction_type is always taken from classification["transaction_type"]
+      (the AI result), never from the transaction_type parameter.  The parameter is kept
+      for backward-compatibility but is only used as a fallback when the classification
+      dict is missing the field (should never happen in practice).
     - Zero-confidence results (fallbacks) are never saved.
     - Empty normalized-merchant keys are never saved.
     - If an entry already exists and the new confidence is strictly higher,
-      the existing entry is updated.
+      the existing entry is updated in-place (type, category, confidence).
     - If a concurrent writer caused a uniqueness collision on INSERT, the
       error is swallowed — the existing entry wins.
     """
@@ -147,12 +151,24 @@ def save_classification_to_cache(
         )
         return
 
+    # Always use the AI's actual result; the caller's preliminary_type is only
+    # a hint and may be wrong (e.g. positive-amount expense from Android app).
+    actual_type = classification.get("transaction_type") or transaction_type
+
+    logger.info(
+        "[MerchantCache] Saving cache entry merchant=%r type=%r category=%r confidence=%.2f",
+        normalized_merchant,
+        actual_type,
+        classification.get("category_name"),
+        confidence,
+    )
+
     existing = (
         db.query(MerchantClassificationCache)
         .filter(
             MerchantClassificationCache.user_id == user_id,
             MerchantClassificationCache.normalized_merchant == normalized_merchant,
-            MerchantClassificationCache.transaction_type == transaction_type,
+            MerchantClassificationCache.transaction_type == actual_type,
         )
         .first()
     )
@@ -166,9 +182,10 @@ def save_classification_to_cache(
             existing.source = "ai"
             existing.updated_at = datetime.now(timezone.utc)
             db.commit()
-            logger.debug(
-                "[MerchantCache] Updated %r → %s (confidence %.2f → %.2f)",
+            logger.info(
+                "[MerchantCache] Updated %r type=%r → %s (confidence %.2f → %.2f)",
                 normalized_merchant,
+                actual_type,
                 classification["category_name"],
                 existing.confidence,
                 confidence,
@@ -178,7 +195,7 @@ def save_classification_to_cache(
     row = MerchantClassificationCache(
         user_id=user_id,
         normalized_merchant=normalized_merchant,
-        transaction_type=transaction_type,
+        transaction_type=actual_type,
         category_name=classification["category_name"],
         normalized_category=classification["normalized_category"],
         confidence=confidence,
@@ -188,16 +205,17 @@ def save_classification_to_cache(
     try:
         db.add(row)
         db.commit()
-        logger.debug(
-            "[MerchantCache] Saved %r → %s / %s (confidence %.2f)",
+        logger.info(
+            "[MerchantCache] Saved %r type=%r → %s (confidence %.2f)",
             normalized_merchant,
+            actual_type,
             classification["category_name"],
-            transaction_type,
             confidence,
         )
     except IntegrityError:
         db.rollback()
         logger.debug(
-            "[MerchantCache] Concurrent insert for %r — existing entry wins",
+            "[MerchantCache] Concurrent insert for %r type=%r — existing entry wins",
             normalized_merchant,
+            actual_type,
         )

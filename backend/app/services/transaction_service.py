@@ -81,13 +81,25 @@ async def create_manual_transaction(
     normalized = normalize_merchant(request.merchant)
 
     # ── Cache lookup ──────────────────────────────────────────────────────────
+    # Primary lookup uses the resolved preliminary_type.  If that misses, try
+    # the complementary type: cache entries are stored under the AI's actual
+    # transaction_type, which may differ from the sign-based preliminary guess
+    # (e.g. a positive-amount expense).  Two-pass avoids redundant AI calls.
     cached = get_cached_classification(db, user_id, normalized, preliminary_type)
+    if cached is None:
+        alt_type = "income" if preliminary_type == "expense" else "expense"
+        cached = get_cached_classification(db, user_id, normalized, alt_type)
+        if cached is not None:
+            logger.info(
+                "[MerchantCache] HIT (alt type) merchant=%r normalized=%r → %s / %s (confidence=%.2f)",
+                request.merchant, normalized,
+                cached["transaction_type"], cached["category_name"], cached["confidence"],
+            )
 
     if cached is not None:
         logger.info(
-            "[MerchantCache] HIT  merchant=%r normalized=%r → %s / %s (confidence=%.2f)",
+            "[MerchantCache] HIT merchant=%r type=%r category=%r confidence=%.2f",
             request.merchant,
-            normalized,
             cached["transaction_type"],
             cached["category_name"],
             cached["confidence"],

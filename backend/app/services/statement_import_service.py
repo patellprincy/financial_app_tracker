@@ -233,7 +233,13 @@ async def _classify_with_cache(
                 fallback_count += 1
             else:
                 try:
-                    save_classification_to_cache(db, user_id, normalized_m, tx_type, result)
+                    # Pass the AI's actual transaction_type so the cache stores
+                    # the correct type, not the sign-derived preliminary guess.
+                    save_classification_to_cache(
+                        db, user_id, normalized_m,
+                        result.get("transaction_type", tx_type),
+                        result,
+                    )
                 except Exception as exc:
                     logger.warning(
                         "statement_import[cache]: failed to save cache entry for %r: %s",
