@@ -96,10 +96,17 @@ async def check_transaction_anomaly(
         logger.error("[MLClient] Cannot connect to ML service at %s: %s", url, exc)
 
     except httpx.HTTPStatusError as exc:
-        logger.error(
-            "[MLClient] HTTP %d from ML service: %s",
-            exc.response.status_code, exc,
-        )
+        sc = exc.response.status_code
+        if sc == 429:
+            logger.warning(
+                "[MLClient] HTTP 429 Too Many Requests — source: Render free-tier "
+                "infrastructure rate limit (no app-level limiter exists in the ML service). "
+                "transaction_id=%s will use fallback. "
+                "Verify statement imports are using /anomaly/detect-batch, not this endpoint.",
+                transaction.id,
+            )
+        else:
+            logger.error("[MLClient] HTTP %d from ML service (single endpoint): %s", sc, exc)
 
     except Exception as exc:
         logger.error("[MLClient] Unexpected error: %s", exc)
@@ -176,10 +183,16 @@ async def check_transactions_anomaly_batch(
         )
 
     except httpx.HTTPStatusError as exc:
-        logger.error(
-            "[MLClient] HTTP %d from ML batch endpoint: %s",
-            exc.response.status_code, exc,
-        )
+        sc = exc.response.status_code
+        if sc == 429:
+            logger.warning(
+                "[MLClient] HTTP 429 Too Many Requests on batch endpoint — source: Render "
+                "free-tier infrastructure rate limit (no app-level limiter in ML service). "
+                "batch_size=%d will use fallbacks.",
+                len(transactions),
+            )
+        else:
+            logger.error("[MLClient] HTTP %d from ML batch endpoint: %s", sc, exc)
 
     except Exception as exc:
         logger.error("[MLClient] Unexpected error in batch call: %s", exc)
