@@ -23,8 +23,8 @@ How it learns user behaviour:
 from sklearn.ensemble import RandomForestClassifier
 
 RF_PARAMS: dict = {
-    "n_estimators":    200,        # 200 trees for stable probability estimates
-    "max_depth":       None,       # unlimited depth: learn complex spending patterns
+    "n_estimators":    50,        # 50 trees for stable probability estimates
+    "max_depth":       10,       # unlimited depth: learn complex spending patterns
     "min_samples_split": 5,        # prevent splits on tiny noisy groups
     "min_samples_leaf":  2,        # each leaf needs 2+ samples (avoids overfitting)
     "class_weight":   "balanced",  # auto-upweight anomaly class by ~1/anomaly_rate
