@@ -31,3 +31,33 @@ class AnomalyResponse(BaseModel):
     confidence: float           # probability of anomaly (0.0 – 1.0)
     reason: Optional[str]       # human-readable explanation; None when normal
     model_version: Optional[str]
+
+
+# ── Batch schemas ──────────────────────────────────────────────────────────────
+
+class AnomalyBatchRequest(BaseModel):
+    """
+    Batch anomaly detection request.
+
+    Sends multiple transactions in a single call so the backend avoids N
+    round-trips to the ML service during a PDF statement import.
+
+    The history list is shared across all transactions — it should contain
+    the user's existing transaction history (i.e. transactions committed
+    BEFORE the current batch, with the batch members excluded).
+    """
+    transactions: list[TransactionInput]
+    history: list[TransactionInput] = []
+
+
+class AnomalyBatchResponse(BaseModel):
+    """
+    Batch anomaly detection response.
+
+    results is in the same order as the request transactions list so the
+    caller can zip(request.transactions, response.results) safely.
+    """
+    results: list[AnomalyResponse]
+    total: int
+    anomaly_count: int
+    model_version: Optional[str] = None

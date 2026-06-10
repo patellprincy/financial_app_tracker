@@ -1,23 +1,37 @@
 """
-Phase 3A — Statement Preview Import (concurrent).
+Phase 3A — Statement Preview Import (concurrent, cache-aware).
 
 Imports user-approved transactions coming back from the Android preview screen
 into the transactions table.  This endpoint does NOT re-parse the PDF; it trusts
-the rows the user kept/edited and runs them through the same AI classification +
-ML anomaly flow used by manual transaction creation.
+the rows the user kept/edited and runs them through AI classification + ML anomaly.
 
-Concurrency model (see import_statement_transactions for the phase breakdown):
-  - The slow work is network I/O to the AI (/classify) and ML (/anomaly/detect)
-    microservices.  Those calls run CONCURRENTLY, bounded by an asyncio.Semaphore.
+Concurrency model:
+  - Classification (Phase 2) is the slow AI I/O work.  Only unique, uncached
+    merchants are sent to the AI service, running CONCURRENTLY, bounded by a
+    Semaphore.
+  - Anomaly detection (Phase 4) is a single HTTP call to /anomaly/detect-batch
+    that sends all imported transactions at once — no per-transaction concurrency.
   - All database access stays SERIALIZED on the single request-scoped Session.
-    SQLAlchemy's sync Session is not safe to use from multiple concurrent tasks,
-    so concurrent tasks never touch `db`; they operate on detached snapshots.
 
-Guarantees (unchanged from the sequential version):
-  - Per-row isolation: one bad row is logged, counted as failed, and skipped;
-    the rest still import.
+Classification optimization:
+  - Merchant strings are normalised before lookup so "STARBUCKS #4421" and
+    "STARBUCKS #8903" resolve to the same cache key.
+  - A single batch DB query fetches all cached entries for unique merchants.
+  - Only merchants absent from the cache are sent to the AI service.
+  - New (non-fallback) results are written back to the cache after the gather.
+  - Every row — including duplicates of the same merchant — receives a result.
+
+Anomaly optimization:
+  - All saved transactions are sent to /anomaly/detect-batch in one HTTP call.
+  - History is loaded once and all batch members are excluded from it, so
+    behavioral features are computed against the user's pre-import history only.
+
+Guarantees (unchanged from the original version):
+  - Per-row isolation: one bad row is logged, counted as failed, and skipped.
   - Never leaks backend error details to the client; only counts are returned.
   - User ownership is validated before anything is imported.
+  - Fallback classifications (confidence == 0.0) are never persisted to cache.
+  - Batch ML failure does not abort the import — fallback anomaly fields are set.
 """
 
 import asyncio
@@ -38,33 +52,32 @@ from app.schemas.statement import (
     StatementImportResponse,
 )
 from app.services.classification_service import classify_transaction
-from app.services.ml_service import check_transaction_anomaly
-# Reuse the helpers that back manual transaction creation so import behaves
-# identically (same category de-duplication and response shape).
+from app.services.merchant_cache_service import (
+    get_cached_batch,
+    save_classification_to_cache,
+)
+from app.services.ml_service import check_transactions_anomaly_batch
 from app.services.transaction_service import _get_or_create_category, _to_response
+from app.utils.merchant_normalizer import normalize_merchant
 
 logger = logging.getLogger(__name__)
 
 _HISTORY_LIMIT = 200
 
-# Max number of AI/ML calls in flight at once. Keeps us from launching one
-# request per transaction against the microservices on a large statement.
-# 5–10 is the safe band; 8 is a reasonable middle.
+# Max concurrent AI classification calls in flight at once.
 _CONCURRENCY_LIMIT = 8
 
-# Local fallbacks used only if the client coroutines raise unexpectedly. The
-# clients themselves already return their own fallbacks on handled failures.
 _CLASSIFY_FALLBACK = {
     "category_name": "Other",
     "normalized_category": "other",
     "confidence": 0.0,
-    "reason": "AI classification unavailable",
+    "reason": "AI classification unavailable during import",
 }
 _ANOMALY_FALLBACK = {
     "is_anomaly": False,
     "anomaly_status": None,
     "anomaly_score": None,
-    "anomaly_reason": "ML anomaly check unavailable",
+    "anomaly_reason": "Anomaly check unavailable during import",
     "ml_model_version": None,
 }
 
@@ -79,62 +92,37 @@ class _PreparedRow:
     transaction_type: str
 
 
-# ── Validation ───────────────────────────────────────────────────────────────
+# ── Helpers — validation ──────────────────────────────────────────────────────
 
 def _parse_transaction_date(raw_date: str) -> datetime:
-    """
-    Parse an ISO 'YYYY-MM-DD' (or full ISO) date from the preview row and return
-    a timezone-aware datetime used as the transaction's created_at.
-
-    Raises ValueError if the date is missing or unparseable so the caller can
-    treat the row as a per-row failure.
-    """
     if not raw_date or not raw_date.strip():
         raise ValueError("empty transaction_date")
-
     text = raw_date.strip()
     try:
-        # date.fromisoformat handles 'YYYY-MM-DD'; combine to midnight UTC.
         d = datetime.fromisoformat(text)
         if d.tzinfo is None:
             d = d.replace(tzinfo=timezone.utc)
         return d
     except ValueError:
-        # Fall back to date-only parsing for plain 'YYYY-MM-DD'.
         from datetime import date as _date
         d = _date.fromisoformat(text)
         return datetime.combine(d, time.min, tzinfo=timezone.utc)
 
 
 def _validate_row(item: ImportTransactionItem) -> tuple[str, datetime, str]:
-    """
-    Validate a single preview row.
-
-    Returns (description, created_at, transaction_type) on success.
-    Raises ValueError with a safe, non-sensitive reason on failure.
-    """
     description = (item.description or "").strip()
     if not description:
         raise ValueError("description is empty")
-
     if item.amount == 0:
         raise ValueError("amount is zero")
-
     created_at = _parse_transaction_date(item.transaction_date)
-
-    # Sign determines type: negative = expense, positive = income.
     transaction_type = "expense" if item.amount < 0 else "income"
     return description, created_at, transaction_type
 
 
-# ── Detached snapshots (so concurrent ML tasks never touch the Session) ───────
+# ── Helpers — ML snapshots ────────────────────────────────────────────────────
 
 def _snapshot_for_ml(t: Transaction) -> SimpleNamespace:
-    """
-    Copy the fields the ML client reads into a plain object detached from the
-    SQLAlchemy session. Concurrent anomaly tasks only read these attributes, so
-    they never trigger a lazy load / refresh on the shared session.
-    """
     return SimpleNamespace(
         id=t.id,
         user_id=t.user_id,
@@ -148,7 +136,6 @@ def _snapshot_for_ml(t: Transaction) -> SimpleNamespace:
 
 
 def _load_history_snapshot(db: Session, user_id) -> list[SimpleNamespace]:
-    """Load the user's recent transactions once (serially) as detached snapshots."""
     rows = (
         db.query(Transaction)
         .filter(Transaction.user_id == user_id)
@@ -159,10 +146,10 @@ def _load_history_snapshot(db: Session, user_id) -> list[SimpleNamespace]:
     return [_snapshot_for_ml(t) for t in rows]
 
 
-# ── Bounded concurrent workers (network I/O only) ─────────────────────────────
+# ── Helpers — bounded concurrent classification workers ───────────────────────
 
 async def _classify_row(sem: asyncio.Semaphore, prepared: _PreparedRow) -> dict:
-    """Classify one row; bounded by the semaphore. Never raises."""
+    """Classify one row via the AI service; bounded by the semaphore.  Never raises."""
     async with sem:
         try:
             return await classify_transaction(
@@ -178,21 +165,102 @@ async def _classify_row(sem: asyncio.Semaphore, prepared: _PreparedRow) -> dict:
             return {"transaction_type": prepared.transaction_type, **_CLASSIFY_FALLBACK}
 
 
-async def _detect_row(
+# ── Phase 2 helper — cache-aware batch classification ────────────────────────
+
+async def _classify_with_cache(
     sem: asyncio.Semaphore,
-    snapshot: SimpleNamespace,
-    history: list[SimpleNamespace],
-) -> dict:
-    """Run anomaly detection for one saved transaction; bounded. Never raises."""
-    async with sem:
-        try:
-            return await check_transaction_anomaly(snapshot, history)
-        except Exception as exc:
-            logger.error(
-                "statement_import: anomaly check raised for txn_id=%s — using fallback: %s",
-                snapshot.id, exc,
-            )
-            return dict(_ANOMALY_FALLBACK)
+    prepared: list[_PreparedRow],
+    user_id,
+    db: Session,
+    upload_id,
+) -> list[dict]:
+    """
+    Classify all prepared rows with merchant-cache deduplication.
+
+    Steps:
+      1. Normalise each row's description to a stable cache key.
+      2. Collect unique (normalized_merchant, transaction_type) pairs.
+      3. Batch-fetch all matching cache entries in a single DB query.
+      4. For unique pairs absent from the cache, send ONE AI request each
+         (concurrently, bounded by the semaphore).
+      5. Persist non-fallback AI results to the cache.
+      6. Map every prepared row (including duplicates) to its result.
+    """
+    # Step 1: per-row cache keys
+    row_keys: list[tuple[str, str]] = [
+        (normalize_merchant(p.description), p.transaction_type)
+        for p in prepared
+    ]
+
+    # Step 2: unique pairs in insertion order
+    unique_pairs: list[tuple[str, str]] = list(dict.fromkeys(row_keys))
+
+    # Step 3: batch cache lookup
+    cache_map: dict[tuple[str, str], dict] = get_cached_batch(db, user_id, unique_pairs)
+    cache_miss_pairs: list[tuple[str, str]] = [
+        pair for pair in unique_pairs if pair not in cache_map
+    ]
+
+    hit_count = len(unique_pairs) - len(cache_miss_pairs)
+    logger.info(
+        "statement_import[cache]: total_rows=%d unique_merchants=%d "
+        "cache_hits=%d cache_misses=%d ai_calls_needed=%d upload_id=%s",
+        len(prepared),
+        len(unique_pairs),
+        hit_count,
+        len(cache_miss_pairs),
+        len(cache_miss_pairs),
+        upload_id,
+    )
+
+    # Step 4: pick one representative _PreparedRow per uncached pair
+    rep_rows: dict[tuple[str, str], _PreparedRow] = {}
+    for p, key in zip(prepared, row_keys):
+        if key in cache_miss_pairs and key not in rep_rows:
+            rep_rows[key] = p
+
+    # Step 5: classify uncached merchants concurrently
+    fallback_count = 0
+    if cache_miss_pairs:
+        miss_results: list[dict] = await asyncio.gather(
+            *[_classify_row(sem, rep_rows[pair]) for pair in cache_miss_pairs]
+        )
+
+        for pair, result in zip(cache_miss_pairs, miss_results):
+            normalized_m, tx_type = pair
+            is_fallback = result.get("confidence", 0.0) == 0.0
+            if is_fallback:
+                fallback_count += 1
+            else:
+                try:
+                    save_classification_to_cache(db, user_id, normalized_m, tx_type, result)
+                except Exception as exc:
+                    logger.warning(
+                        "statement_import[cache]: failed to save cache entry for %r: %s",
+                        normalized_m, exc,
+                    )
+            cache_map[pair] = result
+
+        logger.info(
+            "statement_import[cache]: ai_calls_made=%d fallbacks=%d upload_id=%s",
+            len(cache_miss_pairs), fallback_count, upload_id,
+        )
+    else:
+        logger.info(
+            "statement_import[cache]: all %d unique merchant(s) served from cache — "
+            "0 AI calls made upload_id=%s",
+            len(unique_pairs), upload_id,
+        )
+
+    # Step 6: map every prepared row to its classification
+    results: list[dict] = []
+    for key in row_keys:
+        if key in cache_map:
+            results.append(cache_map[key])
+        else:
+            results.append({"transaction_type": key[1], **_CLASSIFY_FALLBACK})
+
+    return results
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
@@ -204,23 +272,16 @@ async def import_statement_transactions(
     db: Session,
 ) -> StatementImportResponse:
     """
-    Import the user-approved preview rows for a statement upload, processing the
-    AI/ML calls concurrently.
-
-    Request-level validation (raises HTTP errors, aborts the whole request):
-      - upload_id exists AND belongs to the authenticated user (404 otherwise)
-      - transactions list is not empty (400 otherwise)
+    Import the user-approved preview rows for a statement upload.
 
     Phases:
-      1. Validate every row (serial, no I/O).                    -> _PreparedRow[]
-      2. Classify all valid rows CONCURRENTLY (bounded).         -> dict[]
-      3. Insert transactions SERIALLY on the shared session.     -> Transaction[]
-      4. Run anomaly detection CONCURRENTLY on detached snapshots (bounded).
-      5. Apply anomaly fields SERIALLY and commit.
-    Per-row validation/insert/processing failures are logged and counted; they
-    never abort the rest of the batch.
+      1. Validate every row (serial, no I/O).                             -> _PreparedRow[]
+      2. Classify with merchant cache (batch lookup + concurrent           -> dict[]
+         AI only for uncached unique merchants).
+      3. Insert transactions SERIALLY on the shared session.               -> Transaction[]
+      4. Run anomaly detection via a SINGLE batch ML call,                 -> dict[]
+         then apply results serially and commit.
     """
-    # ── Ownership / existence check (combined to avoid leaking existence) ──
     upload = (
         db.query(StatementUpload)
         .filter(StatementUpload.id == upload_id, StatementUpload.user_id == user_id)
@@ -244,8 +305,8 @@ async def import_statement_transactions(
 
     total_submitted = len(request.transactions)
     logger.info(
-        "statement_import: starting (concurrent, limit=%d) upload_id=%s user_id=%s total=%d",
-        _CONCURRENCY_LIMIT, upload_id, user_id, total_submitted,
+        "statement_import: starting upload_id=%s user_id=%s total=%d",
+        upload_id, user_id, total_submitted,
     )
 
     failed = 0
@@ -264,9 +325,9 @@ async def import_statement_transactions(
                 index + 1, total_submitted, exc, upload_id,
             )
 
-    # ── Phase 2: classify all valid rows concurrently (network I/O) ────────
+    # ── Phase 2: cache-aware classification (batch lookup + minimal AI calls) ─
     classifications: list[dict] = (
-        await asyncio.gather(*[_classify_row(sem, p) for p in prepared])
+        await _classify_with_cache(sem, prepared, user_id, db, upload_id)
         if prepared else []
     )
 
@@ -304,22 +365,45 @@ async def import_statement_transactions(
             )
             db.rollback()
 
-    # ── Phase 4 + 5: anomaly detection concurrently, then apply serially ───
+    # ── Phase 4: single batch anomaly detection + apply serially ───────────
     if saved:
-        # Snapshot history once + each saved txn, all detached from the session.
+        # Load history after Phase 3 then exclude the just-imported transactions
+        # so behavioural features are computed against the user's PRE-IMPORT history.
         history_snaps = _load_history_snapshot(db, user_id)
-        ml_jobs = [
-            (txn, snap, [h for h in history_snaps if h.id != snap.id])
-            for txn in saved
-            for snap in (_snapshot_for_ml(txn),)
-        ]
+        saved_ids = {t.id for t in saved}
+        pre_import_history = [h for h in history_snaps if h.id not in saved_ids]
 
-        anomalies = await asyncio.gather(
-            *[_detect_row(sem, snap, hist) for (_, snap, hist) in ml_jobs]
+        transaction_snaps = [_snapshot_for_ml(t) for t in saved]
+
+        logger.info(
+            "statement_import[ml]: sending batch anomaly request — "
+            "transactions=%d history=%d upload_id=%s",
+            len(transaction_snaps), len(pre_import_history), upload_id,
         )
 
-        # Apply results back onto the real ORM rows (serial), then one commit.
-        for (txn, _, _), anomaly in zip(ml_jobs, anomalies):
+        anomalies: list[dict] = await check_transactions_anomaly_batch(
+            transactions=transaction_snaps,
+            history=pre_import_history,
+        )
+
+        # Sanity-check: the batch client guarantees same-length results, but
+        # guard against any unexpected mismatch.
+        if len(anomalies) != len(saved):
+            logger.error(
+                "statement_import[ml]: anomaly count mismatch saved=%d results=%d — "
+                "applying fallbacks upload_id=%s",
+                len(saved), len(anomalies), upload_id,
+            )
+            anomalies = [_ANOMALY_FALLBACK.copy() for _ in saved]
+
+        anomaly_count = sum(1 for a in anomalies if a.get("is_anomaly"))
+        fallback_ml_count = sum(1 for a in anomalies if a.get("anomaly_score") is None)
+        logger.info(
+            "statement_import[ml]: batch complete — anomalies=%d fallbacks=%d upload_id=%s",
+            anomaly_count, fallback_ml_count, upload_id,
+        )
+
+        for txn, anomaly in zip(saved, anomalies):
             txn.is_anomaly = anomaly["is_anomaly"]
             txn.anomaly_status = anomaly["anomaly_status"]
             txn.anomaly_score = anomaly["anomaly_score"]
@@ -332,19 +416,15 @@ async def import_statement_transactions(
             for txn in saved:
                 db.refresh(txn)
         except Exception as exc:
-            # Transactions were already committed in Phase 3, so they persist;
-            # only the anomaly annotations are lost on failure.
             logger.error(
                 "statement_import: applying anomaly fields failed (upload_id=%s): %s",
                 upload_id, exc,
             )
             db.rollback()
 
-    # Build the response payload while the rows are fresh (before mutating upload).
     response_transactions = [_to_response(t) for t in saved]
     imported_count = len(saved)
 
-    # ── Update the upload record ───────────────────────────────────────────
     upload.status = "imported"
     upload.imported_transactions = imported_count
     upload.failed_transactions = failed
@@ -353,7 +433,7 @@ async def import_statement_transactions(
     db.refresh(upload)
 
     logger.info(
-        "statement_import: complete (concurrent) upload_id=%s imported=%d failed=%d total=%d",
+        "statement_import: complete upload_id=%s imported=%d failed=%d total=%d",
         upload_id, imported_count, failed, total_submitted,
     )
 
