@@ -57,7 +57,7 @@ async def startup() -> None:
             "Then train:     python -m training.train",
             model_path,
         )
-    logger.info("=== Ready — POST /anomaly/detect ===")
+    logger.info("=== Ready — POST /anomaly/detect  |  POST /anomaly/detect-batch ===")
 
 
 @app.get("/")

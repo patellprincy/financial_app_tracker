@@ -9,6 +9,9 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 _TIMEOUT_SECONDS = 10.0
+# Batch requests process many transactions in one call; allow more time for
+# large imports and for Render free-tier cold-start warm-up.
+_BATCH_TIMEOUT_SECONDS = 60.0
 
 _FALLBACK: dict[str, Any] = {
     "is_anomaly": False,
@@ -37,15 +40,26 @@ def _build_transaction_input(t) -> dict:
     }
 
 
+def _map_single_result(data: dict) -> dict[str, Any]:
+    """Map the ML service response fields to the backend anomaly field names."""
+    return {
+        "is_anomaly": bool(data.get("is_anomaly", False)),
+        "anomaly_status": data.get("anomaly_status"),
+        "anomaly_score": float(data["confidence"]) if data.get("confidence") is not None else None,
+        "anomaly_reason": data.get("reason"),
+        "ml_model_version": data.get("model_version"),
+    }
+
+
 async def check_transaction_anomaly(
     transaction,
     history: list,
 ) -> dict[str, Any]:
     """
-    Posts the transaction + user history to the ML anomaly detection service.
+    Posts a single transaction + history to the ML anomaly detection service.
 
-    Never raises — returns _FALLBACK on any failure so transaction creation
-    always succeeds even when the ML service is down.
+    Used by manual transaction creation.  Never raises — returns _FALLBACK on
+    any failure so transaction creation always completes even when ML is down.
     """
     url = f"{settings.ML_SERVICE_URL.rstrip('/')}/anomaly/detect"
     payload = {
@@ -54,7 +68,7 @@ async def check_transaction_anomaly(
     }
 
     logger.info(
-        "[MLClient] → POST %s | transaction_id=%d merchant=%r history_len=%d",
+        "[MLClient] → POST %s | transaction_id=%s merchant=%r history_len=%d",
         url, transaction.id, transaction.merchant, len(history),
     )
 
@@ -64,13 +78,7 @@ async def check_transaction_anomaly(
             response.raise_for_status()
             data = response.json()
 
-        result: dict[str, Any] = {
-            "is_anomaly": bool(data.get("is_anomaly", False)),
-            "anomaly_status": data.get("anomaly_status"),
-            "anomaly_score": float(data["confidence"]) if data.get("confidence") is not None else None,
-            "anomaly_reason": data.get("reason"),
-            "ml_model_version": data.get("model_version"),
-        }
+        result = _map_single_result(data)
 
         logger.info(
             "[MLClient] ← HTTP %d | is_anomaly=%s score=%s reason=%r",
@@ -97,3 +105,88 @@ async def check_transaction_anomaly(
         logger.error("[MLClient] Unexpected error: %s", exc)
 
     return _FALLBACK.copy()
+
+
+async def check_transactions_anomaly_batch(
+    transactions: list,
+    history: list,
+) -> list[dict[str, Any]]:
+    """
+    Post all transactions in a single batch call to the ML anomaly detection service.
+
+    Used by PDF statement import to reduce N HTTP calls to 1.
+    The shared history list should contain the user's pre-existing transactions
+    (the batch members themselves should be excluded from history).
+
+    Returns a list of anomaly result dicts in the same order as transactions.
+    On any failure the import is not aborted — every transaction receives a
+    _FALLBACK dict instead so anomaly fields are safely populated.
+    Never raises.
+    """
+    if not transactions:
+        return []
+
+    url = f"{settings.ML_SERVICE_URL.rstrip('/')}/anomaly/detect-batch"
+    payload = {
+        "transactions": [_build_transaction_input(t) for t in transactions],
+        "history": [_build_transaction_input(h) for h in history],
+    }
+
+    logger.info(
+        "[MLClient] → POST %s | batch transactions=%d history_len=%d",
+        url, len(transactions), len(history),
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=_BATCH_TIMEOUT_SECONDS) as client:
+            response = await client.post(url, json=payload)
+            response.raise_for_status()
+            data = response.json()
+
+        raw_results: list[dict] = data.get("results", [])
+
+        if len(raw_results) != len(transactions):
+            logger.error(
+                "[MLClient] Batch result count mismatch: sent=%d got=%d — using fallbacks",
+                len(transactions), len(raw_results),
+            )
+            return [_FALLBACK.copy() for _ in transactions]
+
+        results = [_map_single_result(r) for r in raw_results]
+        anomaly_count = sum(1 for r in results if r["is_anomaly"])
+
+        logger.info(
+            "[MLClient] ← HTTP %d | batch processed=%d anomalies=%d model=%s",
+            response.status_code,
+            len(results),
+            anomaly_count,
+            data.get("model_version"),
+        )
+        return results
+
+    except httpx.TimeoutException:
+        logger.warning(
+            "[MLClient] Batch timeout after %.1fs for %d transactions — using fallbacks",
+            _BATCH_TIMEOUT_SECONDS, len(transactions),
+        )
+
+    except httpx.ConnectError as exc:
+        logger.error(
+            "[MLClient] Cannot connect to ML service at %s: %s", url, exc
+        )
+
+    except httpx.HTTPStatusError as exc:
+        logger.error(
+            "[MLClient] HTTP %d from ML batch endpoint: %s",
+            exc.response.status_code, exc,
+        )
+
+    except Exception as exc:
+        logger.error("[MLClient] Unexpected error in batch call: %s", exc)
+
+    fallbacks = [_FALLBACK.copy() for _ in transactions]
+    logger.warning(
+        "[MLClient] Batch call failed — returning %d fallback result(s)",
+        len(fallbacks),
+    )
+    return fallbacks

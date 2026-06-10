@@ -244,7 +244,55 @@ def _build_reason(row: pd.Series, is_anomaly: bool, confidence: float) -> str | 
     )
 
 
-# ── Public entry point ─────────────────────────────────────────────────────────
+# ── Public entry points ────────────────────────────────────────────────────────
+
+def predict_anomaly_batch(
+    transactions: list[dict],
+    history: list[dict],
+) -> list[dict]:
+    """
+    Predict anomalies for a list of transactions using a shared history.
+
+    Each transaction is evaluated independently against the same history list
+    (the user's pre-existing transactions, not other members of this batch).
+    The model and preprocessor are loaded once via lru_cache and reused for
+    every transaction.
+
+    Returns a list of result dicts in the same order as transactions.
+    Never raises — individual transaction failures are caught and returned
+    as safe fallback dicts so one bad row cannot abort the whole batch.
+    """
+    history_dicts = list(history)  # avoid re-converting if already a list
+    results: list[dict] = []
+
+    for txn in transactions:
+        try:
+            result = predict_anomaly(transaction=txn, history=history_dicts)
+        except Exception as exc:
+            txn_id = str(txn.get("transaction_id", "unknown"))
+            user_id = str(txn.get("user_id", "unknown"))
+            logger.error(
+                "predict_anomaly_batch: prediction failed for txn=%s — using fallback: %s",
+                txn_id, exc,
+            )
+            result = {
+                "transaction_id": txn_id,
+                "user_id": user_id,
+                "is_anomaly": False,
+                "anomaly_status": "insufficient_history",
+                "confidence": 0.0,
+                "reason": None,
+                "model_version": None,
+            }
+        results.append(result)
+
+    anomaly_count = sum(1 for r in results if r.get("is_anomaly"))
+    logger.info(
+        "predict_anomaly_batch: processed=%d anomalies=%d",
+        len(results), anomaly_count,
+    )
+    return results
+
 
 def predict_anomaly(transaction: dict, history: list[dict]) -> dict:
     """

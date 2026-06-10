@@ -11,12 +11,13 @@ from app.schemas.transaction import (
     DashboardResponse,
 )
 
-
-
 from app.services.classification_service import classify_transaction
+from app.services.merchant_cache_service import (
+    get_cached_classification,
+    save_classification_to_cache,
+)
 from app.services.ml_service import check_transaction_anomaly
-
-
+from app.utils.merchant_normalizer import normalize_merchant
 
 logger = logging.getLogger(__name__)
 
@@ -70,18 +71,49 @@ def _get_or_create_category(
 async def create_manual_transaction(
     request: ManualTransactionRequest, user_id, db: Session
 ) -> TransactionResponse:
-    classification = await classify_transaction(
-        merchant=request.merchant,
-        amount=request.amount,
-        notes=request.notes or None,
-    )
-    logger.info(
-        "AI classified %r → %s / %s (confidence=%.2f)",
-        request.merchant,
-        classification["transaction_type"],
-        classification["category_name"],
-        classification["confidence"],
-    )
+    # Derive the expected transaction type from the amount sign so we can use
+    # it as part of the merchant cache key (same key used by the import path).
+    preliminary_type = "expense" if request.amount < 0 else "income"
+    normalized = normalize_merchant(request.merchant)
+
+    # ── Cache lookup ──────────────────────────────────────────────────────────
+    cached = get_cached_classification(db, user_id, normalized, preliminary_type)
+
+    if cached is not None:
+        logger.info(
+            "[MerchantCache] HIT  merchant=%r normalized=%r → %s / %s (confidence=%.2f)",
+            request.merchant,
+            normalized,
+            cached["transaction_type"],
+            cached["category_name"],
+            cached["confidence"],
+        )
+        classification = cached
+    else:
+        # ── Cache miss — call AI ──────────────────────────────────────────────
+        logger.info(
+            "[MerchantCache] MISS merchant=%r normalized=%r — calling AI",
+            request.merchant,
+            normalized,
+        )
+        classification = await classify_transaction(
+            merchant=request.merchant,
+            amount=request.amount,
+            notes=request.notes or None,
+        )
+        logger.info(
+            "[MerchantCache] AI classified %r → %s / %s (confidence=%.2f)",
+            request.merchant,
+            classification["transaction_type"],
+            classification["category_name"],
+            classification["confidence"],
+        )
+
+        # Save to cache using the sign-derived type as key so future lookups
+        # from the import path (which also derives type from sign) hit the cache.
+        save_classification_to_cache(
+            db, user_id, normalized, preliminary_type, classification
+        )
 
     category = _get_or_create_category(
         db=db,
